@@ -133,7 +133,7 @@ g_over_x = g_nfw / x_nfw
 v_cusp = VMAX * np.sqrt(g_over_x / np.max(g_over_x))
 
 init_params = {
-    "inc": 45.0,
+    "inc": 15.0,
     "pa": PA_INIT,
     "flux": 1.0,
     "vsys": 0.0,
