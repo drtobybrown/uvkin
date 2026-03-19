@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Pipeline outputs
+results/
+*.npz
+!environment.yml
+
+# Notebook checkpoints
+.ipynb_checkpoints/

@@ -1,0 +1,21 @@
+name: uvkin
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10,<3.13
+  - numpy>=1.24
+  - scipy>=1.10
+  - matplotlib>=3.7
+  - astropy>=5.3
+  - python-casacore>=3.5
+  - pyuvdata>=2.4
+  - emcee>=3.1
+  - jupyter
+  - ipykernel
+  - pip
+  - pip:
+    - kinms>=3.0
+    - corner
+    - uvfit @ git+https://github.com/drtobybrown/uvfit.git
+    - ms2uvfit @ git+https://github.com/drtobybrown/ms2uvfit.git
