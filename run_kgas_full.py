@@ -1,43 +1,40 @@
 #!/usr/bin/env python3
 """
-KGAS7 cusp vs core kinematic fitting — production script.
+Cusp vs core kinematic fitting — production script.
 
 Fits pseudo-isothermal (core) and NFW (cusp) velocity profiles to
-KILOGAS007 visibilities using UVfit + KinMS, then saves results.
+KILOGAS visibilities using UVfit + KinMS, then saves results.
 
 Usage:
-    # Local (downsampled, quick test)
-    python run_kgas7_full.py \
-        --data /Users/thbrown/kilogas/DR1/visibilities/KILOGAS007.small.npz \
-        --outdir /Users/thbrown/kilogas/analysis/uvkin/results
+    # Fit one model on CANFAR
+    python run_kgas_full.py --data KILOGAS007.npz --outdir results/KILOGAS007 --model core
 
-    # CANFAR (full data, production)
-    python run_kgas7_full.py  # uses defaults
+    # Compare previously saved results (no data needed)
+    python run_kgas_full.py --outdir results/KILOGAS007 --model compare
 """
 
 import argparse
+import gc
 import logging
-import os
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
-from uvfit import UVDataset, Fitter
-from uvfit.forward_model import KinMSModel
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-parser = argparse.ArgumentParser(description="KGAS7 cusp vs core fitting")
+parser = argparse.ArgumentParser(description="Cusp vs core kinematic fitting")
 parser.add_argument(
     "--data",
-    default="/arc/projects/kilogas/DR1/visibilities/KILOGAS007.npz",
-    help="Path to visibility .npz file",
+    default=None,
+    help="Path to visibility .npz file (not required for --model compare)",
 )
 parser.add_argument(
     "--outdir",
-    default="/arc/projects/kilogas/analysis/uvkin/results",
+    required=True,
     help="Directory for output files",
 )
 parser.add_argument(
@@ -46,9 +43,27 @@ parser.add_argument(
     choices=["numpy", "jax"],
     help="Array backend for NUFFT degridding (jax for GPU)",
 )
+parser.add_argument(
+    "--model",
+    default="both",
+    choices=["core", "cusp", "both", "compare"],
+    help="Which model(s) to fit, or 'compare' to only print saved results",
+)
+parser.add_argument(
+    "--precision",
+    default="single",
+    choices=["single", "double"],
+    help="Array precision: 'single' (float32) halves RAM, 'double' (float64) for max accuracy",
+)
 parser.add_argument("--n-walkers", type=int, default=32)
 parser.add_argument("--n-steps", type=int, default=400)
 parser.add_argument("--n-burn", type=int, default=100)
+parser.add_argument(
+    "--n-processes",
+    type=int,
+    default=1,
+    help="Parallel processes for emcee walker evaluation (>1 uses multiprocessing.Pool)",
+)
 args = parser.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -61,11 +76,68 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
     handlers=[
-        logging.FileHandler(outdir / "run_kgas7.log"),
+        logging.FileHandler(outdir / "run.log"),
         logging.StreamHandler(),
     ],
 )
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Compare-only mode (no data loading required)
+# ---------------------------------------------------------------------------
+def print_comparison(results_dir: Path) -> None:
+    """Load saved core + cusp results and print BIC comparison."""
+    core_path = results_dir / "core_result.npz"
+    cusp_path = results_dir / "cusp_result.npz"
+
+    for p in (core_path, cusp_path):
+        if not p.exists():
+            log.error("Missing result file: %s", p)
+            sys.exit(1)
+
+    core_res = np.load(core_path)
+    cusp_res = np.load(cusp_path)
+
+    n_data = int(core_res["n_data"])
+    k = int(core_res["n_params"])
+
+    bic_core = float(core_res["chi2"]) + k * np.log(n_data)
+    bic_cusp = float(cusp_res["chi2"]) + k * np.log(n_data)
+    delta_bic = bic_cusp - bic_core
+
+    log.info("=" * 55)
+    log.info("COMPARISON  (%s)", results_dir)
+    log.info("-" * 55)
+    log.info("%-25s %12s %12s", "Metric", "Core", "Cusp")
+    log.info("%-25s %12.2f %12.2f", "chi2",
+             float(core_res["chi2"]), float(cusp_res["chi2"]))
+    log.info("%-25s %12.6f %12.6f", "Reduced chi2",
+             float(core_res["reduced_chi2"]), float(cusp_res["reduced_chi2"]))
+    log.info("%-25s %12.2f %12.2f", "BIC", bic_core, bic_cusp)
+    log.info("-" * 55)
+    log.info("%-25s %12.2f", "Delta-BIC (cusp - core)", delta_bic)
+    if delta_bic > 6:
+        log.info("Strong evidence for CORE over cusp.")
+    elif delta_bic < -6:
+        log.info("Strong evidence for CUSP over core.")
+    else:
+        log.info("No strong preference (|Delta-BIC| < 6).")
+    log.info("=" * 55)
+
+
+if args.model == "compare":
+    print_comparison(outdir)
+    sys.exit(0)
+
+# ---------------------------------------------------------------------------
+# From here on we need data — validate
+# ---------------------------------------------------------------------------
+if args.data is None:
+    parser.error("--data is required when --model is not 'compare'")
+
+from uvfit import UVDataset, Fitter
+from uvfit.forward_model import KinMSModel
 
 # ---------------------------------------------------------------------------
 # Source parameters
@@ -81,13 +153,14 @@ F_REST = 230.538e9    # CO(2-1) rest frequency, Hz
 C_KMS = 299792.458    # speed of light, km/s
 
 # ---------------------------------------------------------------------------
-# Load and trim data
+# Load and trim data (free full arrays ASAP to reduce peak RAM)
 # ---------------------------------------------------------------------------
 log.info("Loading data from %s", args.data)
+log.info("Precision: %s  |  Processes: %d  |  Model: %s",
+         args.precision, args.n_processes, args.model)
 t0 = time.time()
 d = np.load(args.data)
 u_all, v_all = d["u"], d["v"]
-vis_all, weights_all = d["vis"], d["weights"]
 freqs_all = d["freqs"]
 log.info(
     "Loaded %d baselines x %d channels in %.1fs",
@@ -100,11 +173,14 @@ v_hi = VSYS + VMAX + VEL_BUFFER
 chan_mask = (vel_all >= v_lo) & (vel_all <= v_hi)
 
 freqs_trim = freqs_all[chan_mask]
-vis_trim = vis_all[:, chan_mask]
-weights_trim = weights_all[:, chan_mask]
+vis_trim = d["vis"][:, chan_mask]
+weights_trim = d["weights"][:, chan_mask]
 vel_trim = vel_all[chan_mask]
 dv_kms = float(np.median(np.abs(np.diff(vel_trim))))
 n_chan_trim = int(chan_mask.sum())
+
+del d, freqs_all, vel_all
+gc.collect()
 
 log.info(
     "Trimmed to %d channels (%.0f – %.0f km/s), dv=%.3f km/s",
@@ -114,6 +190,17 @@ log.info(
 uvdata = UVDataset(
     u=u_all, v=v_all,
     vis_data=vis_trim, weights=weights_trim, freqs=freqs_trim,
+    precision=args.precision,
+)
+del u_all, v_all, vis_trim, weights_trim, freqs_trim
+gc.collect()
+
+vis_mb = uvdata.vis_data.nbytes / 1024**2
+wgt_mb = uvdata.weights.nbytes / 1024**2
+uv_mb = (uvdata.u.nbytes + uvdata.v.nbytes) / 1024**2
+log.info(
+    "UVDataset RAM: vis %.1f MB (%s)  weights %.1f MB  u+v %.1f MB  total %.1f MB",
+    vis_mb, uvdata.vis_data.dtype, wgt_mb, uv_mb, vis_mb + wgt_mb + uv_mb,
 )
 
 # ---------------------------------------------------------------------------
@@ -140,6 +227,9 @@ init_params = {
     "gas_sigma": 10.0,
 }
 
+n_data = 2 * uvdata.vis_data.size
+n_params = len(init_params)
+
 # ---------------------------------------------------------------------------
 # Fit helper
 # ---------------------------------------------------------------------------
@@ -153,6 +243,7 @@ def run_fit(label: str, velprof: np.ndarray) -> None:
         xs=NX, ys=NY, vs=n_chan_trim,
         cell_size_arcsec=CELLSIZE, channel_width_kms=dv_kms,
         sbprof=sbprof, velprof=velprof, sbrad=radius, velrad=radius,
+        precision=args.precision,
     )
     fitter = Fitter(uvdata=uvdata, forward_model=model, backend=args.backend)
 
@@ -167,8 +258,8 @@ def run_fit(label: str, velprof: np.ndarray) -> None:
 
     # --- MCMC ---
     log.info(
-        "[%s] Running emcee (%d walkers, %d steps, %d burn-in)...",
-        label, args.n_walkers, args.n_steps, args.n_burn,
+        "[%s] Running emcee (%d walkers, %d steps, %d burn-in, %d processes)...",
+        label, args.n_walkers, args.n_steps, args.n_burn, args.n_processes,
     )
     t0 = time.time()
     result_mcmc = fitter.fit(
@@ -177,6 +268,7 @@ def run_fit(label: str, velprof: np.ndarray) -> None:
         n_walkers=args.n_walkers,
         n_steps=args.n_steps,
         n_burn=args.n_burn,
+        n_processes=args.n_processes,
     )
     log.info(
         "[%s] MCMC done in %.1fs  rchi2=%.6f  MAP=%s",
@@ -186,20 +278,21 @@ def run_fit(label: str, velprof: np.ndarray) -> None:
     # --- Save ---
     tag = label.lower()
     np.savez(
-        outdir / f"kgas7_{tag}_result.npz",
+        outdir / f"{tag}_result.npz",
         params=np.array(list(result_mcmc.params.values())),
         param_names=np.array(list(result_mcmc.params.keys())),
         chi2=result_mcmc.chi2,
         reduced_chi2=result_mcmc.reduced_chi2,
+        n_data=n_data,
+        n_params=n_params,
         chains=result_mcmc.chains,
         log_prob=result_mcmc.log_prob,
     )
-    log.info("[%s] Results saved to %s", label, outdir / f"kgas7_{tag}_result.npz")
+    log.info("[%s] Results saved to %s", label, outdir / f"{tag}_result.npz")
 
-    # Best-fit cube
     best_cube = model.generate_cube(result_mcmc.params)
     np.savez_compressed(
-        outdir / f"kgas7_{tag}_bestfit_cube.npz",
+        outdir / f"{tag}_bestfit_cube.npz",
         cube=best_cube,
         vel=vel_trim,
     )
@@ -207,39 +300,17 @@ def run_fit(label: str, velprof: np.ndarray) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Run both models
+# Run requested model(s)
 # ---------------------------------------------------------------------------
 t_total = time.time()
-run_fit("Core", v_core)
-run_fit("Cusp", v_cusp)
 
-# ---------------------------------------------------------------------------
-# Summary comparison
-# ---------------------------------------------------------------------------
-n_data = 2 * uvdata.vis_data.size
-k = 5
+if args.model in ("core", "both"):
+    run_fit("Core", v_core)
+if args.model in ("cusp", "both"):
+    run_fit("Cusp", v_cusp)
 
-core_res = np.load(outdir / "kgas7_core_result.npz")
-cusp_res = np.load(outdir / "kgas7_cusp_result.npz")
+# Print comparison when both models were run in the same invocation
+if args.model == "both":
+    print_comparison(outdir)
 
-bic_core = float(core_res["chi2"]) + k * np.log(n_data)
-bic_cusp = float(cusp_res["chi2"]) + k * np.log(n_data)
-delta_bic = bic_cusp - bic_core
-
-log.info("=" * 60)
-log.info("SUMMARY")
-log.info("-" * 60)
-log.info("%-25s %12s %12s", "Metric", "Core", "Cusp")
-log.info("%-25s %12.2f %12.2f", "chi2", float(core_res["chi2"]), float(cusp_res["chi2"]))
-log.info("%-25s %12.6f %12.6f", "Reduced chi2", float(core_res["reduced_chi2"]), float(cusp_res["reduced_chi2"]))
-log.info("%-25s %12.2f %12.2f", "BIC", bic_core, bic_cusp)
-log.info("-" * 60)
-log.info("%-25s %12.2f", "Delta-BIC (cusp - core)", delta_bic)
-if delta_bic > 6:
-    log.info("Strong evidence for CORE over cusp.")
-elif delta_bic < -6:
-    log.info("Strong evidence for CUSP over core.")
-else:
-    log.info("No strong preference (|Delta-BIC| < 6).")
-log.info("=" * 60)
 log.info("Total runtime: %.1f min", (time.time() - t_total) / 60)
