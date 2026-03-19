@@ -17,5 +17,6 @@ dependencies:
   - pip:
     - kinms>=3.0
     - corner
+    - tqdm
     - uvfit @ git+https://github.com/drtobybrown/uvfit.git
     - ms2uvfit @ git+https://github.com/drtobybrown/ms2uvfit.git
