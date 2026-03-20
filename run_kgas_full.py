@@ -150,6 +150,87 @@ log.info(
 )
 
 # ---------------------------------------------------------------------------
+# Pre-fit diagnostics
+# ---------------------------------------------------------------------------
+from astropy.cosmology import Planck18
+import astropy.units as au
+
+log.info("=" * 60)
+log.info("PRE-FIT DIAGNOSTICS")
+
+# A. Integrated visibility SNR
+amp_line = np.abs(uvdata.vis_data)
+w_safe = np.where(uvdata.weights > 0, uvdata.weights, np.inf)
+sigma_vis = 1.0 / np.sqrt(w_safe)
+snr_per_vis = amp_line / sigma_vis
+integrated_snr = float(np.sqrt(np.sum(snr_per_vis ** 2)))
+snr_per_channel = np.sqrt(np.sum(snr_per_vis ** 2, axis=0))
+log.info("Integrated line SNR: %.1f", integrated_snr)
+if integrated_snr < 10:
+    log.warning("Integrated SNR < 10 — detection may be marginal")
+
+# B. Radial visibility profile (q-plot) and q-threshold
+q_all = np.sqrt(uvdata.u ** 2 + uvdata.v ** 2)
+q_max = float(np.max(q_all))
+
+N_QBINS = 50
+q_edges = np.linspace(float(np.min(q_all)), q_max, N_QBINS + 1)
+q_centers = 0.5 * (q_edges[:-1] + q_edges[1:])
+amp_binned = np.zeros(N_QBINS)
+noise_floor = np.zeros(N_QBINS)
+
+for i in range(N_QBINS):
+    bl_mask = (q_all >= q_edges[i]) & (q_all < q_edges[i + 1])
+    n_bl = int(bl_mask.sum())
+    if n_bl == 0:
+        continue
+    amp_binned[i] = float(np.mean(np.abs(uvdata.vis_data[bl_mask, :]).mean(axis=1)))
+    w_bin = uvdata.weights[bl_mask, :]
+    w_bin_safe = np.where(w_bin > 0, w_bin, np.inf)
+    noise_floor[i] = float(np.sqrt(np.sum(1.0 / w_bin_safe)) / n_bl)
+
+# C. Critical q and high-q SNR
+theta_core_rad = R_SCALE * np.pi / (180.0 * 3600.0)
+q_crit = 1.0 / theta_core_rad
+high_q_mask = (q_centers >= 0.5 * q_crit) & (q_centers <= q_max)
+if high_q_mask.any() and np.any(noise_floor[high_q_mask] > 0):
+    A_high = float(np.mean(amp_binned[high_q_mask]))
+    sigma_high = float(np.mean(noise_floor[high_q_mask]))
+    high_q_snr = A_high / sigma_high if sigma_high > 0 else np.inf
+else:
+    high_q_snr = 0.0
+
+log.info("q_crit (1/theta_core): %.0f wavelengths", q_crit)
+log.info("q_max (longest baseline): %.0f wavelengths", q_max)
+log.info("High-q SNR (0.5*q_crit to q_max): %.1f", high_q_snr)
+if q_max < q_crit:
+    log.warning("q_max < q_crit — baselines do not reach the scale radius")
+if high_q_snr < 5:
+    log.warning("High-q SNR < 5 — gamma formally unconstrained at this resolution")
+
+# D. Physical resolution
+z = VSYS / C_KMS
+D_Mpc = float(Planck18.luminosity_distance(z).to(au.Mpc).value)
+theta_res_rad = 1.0 / (2.0 * q_max) if q_max > 0 else np.inf
+theta_res_arcsec = float(np.degrees(theta_res_rad) * 3600.0)
+kpc_per_arcsec = float(Planck18.kpc_proper_per_arcmin(z).to(au.kpc / au.arcsec).value)
+R_phys_kpc = theta_res_arcsec * kpc_per_arcsec
+R_scale_kpc = R_SCALE * kpc_per_arcsec
+
+log.info("Distance (Planck18): %.1f Mpc  (z=%.5f)", D_Mpc, z)
+log.info("Angular resolution: %.3f arcsec", theta_res_arcsec)
+log.info("Physical resolution: %.2f kpc", R_phys_kpc)
+log.info("Scale radius: %.1f arcsec = %.2f kpc", R_SCALE, R_scale_kpc)
+if R_phys_kpc > R_scale_kpc:
+    log.warning("Physical resolution (%.2f kpc) > scale radius (%.2f kpc) "
+                "— data cannot resolve the inner profile", R_phys_kpc, R_scale_kpc)
+
+del amp_line, sigma_vis, snr_per_vis, snr_per_channel, q_all
+del amp_binned, noise_floor, q_centers, q_edges
+gc.collect()
+log.info("=" * 60)
+
+# ---------------------------------------------------------------------------
 # Model setup
 # ---------------------------------------------------------------------------
 radius = np.arange(0.01, 100, 0.1)
