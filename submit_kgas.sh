@@ -23,14 +23,15 @@ GALAXY_IDS=(
 )
 
 # ── Shared configuration ──
-IMAGE="images.canfar.net/skaha/astropy:latest"
+IMAGE="images.canfar.net/skaha/astroml:latest"
+CONDA_ENV="uvkin"
 BACKEND="numpy"
 PRECISION="single"
 N_PROCESSES=8
 
 ARC_BASE="/arc/projects/KILOGAS/analysis/toby_sandbox"
 VIS_DIR="${ARC_BASE}/visibilities"
-RESULTS_BASE="${ARC_BASE}/uvkin/results"
+RESULTS_BASE="${ARC_BASE}/results"
 SCRIPT="${ARC_BASE}/uvkin/run_kgas_full.py"
 
 N_WALKERS=32
@@ -60,7 +61,7 @@ for GAL in "${GALAXY_IDS[@]}"; do
     DATA="${VIS_DIR}/${GAL}.npz"
     OUTDIR="${RESULTS_BASE}/${GAL}"
 
-    BASE_CMD="python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --backend ${BACKEND} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-steps ${N_STEPS} --n-burn ${N_BURN} --n-processes ${N_PROCESSES}"
+    BASE_CMD="conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --backend ${BACKEND} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-steps ${N_STEPS} --n-burn ${N_BURN} --n-processes ${N_PROCESSES}"
 
     echo "----------------------------------------------"
     echo "${GAL}"
@@ -69,7 +70,7 @@ for GAL in "${GALAXY_IDS[@]}"; do
 
     for MODEL in core cusp; do
         CMD="${BASE_CMD} --model ${MODEL}"
-        JOB_NAME="${GAL,,}-${MODEL}"   # lowercase galaxy ID
+        JOB_NAME="$(echo "${GAL}" | tr '[:upper:]' '[:lower:]')-${MODEL}"   # lowercase galaxy ID
 
         echo "  ${MODEL}: ${JOB_NAME}"
 
