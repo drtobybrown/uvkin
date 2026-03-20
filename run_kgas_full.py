@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-Cusp vs core kinematic fitting — production script.
+gNFW kinematic fitting — production script.
 
-Fits pseudo-isothermal (core) and NFW (cusp) velocity profiles to
-KILOGAS visibilities using UVfit + KinMS, then saves results.
+Fits a generalized NFW (gNFW) velocity profile to KILOGAS visibilities
+using UVfit + KinMS. The inner slope gamma is a free MCMC parameter:
+gamma = 0 -> flat core, gamma = 1 -> classical NFW cusp.
 
 Usage:
-    # Fit one model on CANFAR
-    python run_kgas_full.py --data KILOGAS007.npz --outdir results/KILOGAS007 --model core
+    # Fixed-step run
+    python run_kgas_full.py --data KILOGAS007.npz --outdir results/KILOGAS007
 
-    # Compare previously saved results (no data needed)
-    python run_kgas_full.py --outdir results/KILOGAS007 --model compare
+    # Tau-based convergence
+    python run_kgas_full.py --data KILOGAS007.npz --outdir results/KILOGAS007 --converge
 """
 
 import argparse
 import gc
 import logging
-import sys
 import time
 from pathlib import Path
 
@@ -26,44 +26,39 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-parser = argparse.ArgumentParser(description="Cusp vs core kinematic fitting")
+parser = argparse.ArgumentParser(description="gNFW kinematic fitting")
+parser.add_argument("--data", required=True, help="Path to visibility .npz file")
+parser.add_argument("--outdir", required=True, help="Directory for output files")
 parser.add_argument(
-    "--data",
-    default=None,
-    help="Path to visibility .npz file (not required for --model compare)",
-)
-parser.add_argument(
-    "--outdir",
-    required=True,
-    help="Directory for output files",
-)
-parser.add_argument(
-    "--backend",
-    default="numpy",
-    choices=["numpy", "jax"],
-    help="Array backend for NUFFT degridding (jax for GPU)",
-)
-parser.add_argument(
-    "--model",
-    default="both",
-    choices=["core", "cusp", "both", "compare"],
-    help="Which model(s) to fit, or 'compare' to only print saved results",
-)
-parser.add_argument(
-    "--precision",
-    default="single",
-    choices=["single", "double"],
-    help="Array precision: 'single' (float32) halves RAM, 'double' (float64) for max accuracy",
+    "--precision", default="single", choices=["single", "double"],
+    help="Array precision: 'single' (float32) halves RAM",
 )
 parser.add_argument("--n-walkers", type=int, default=32)
-parser.add_argument("--n-steps", type=int, default=400)
-parser.add_argument("--n-burn", type=int, default=100)
-parser.add_argument(
-    "--n-processes",
-    type=int,
-    default=1,
-    help="Parallel processes for emcee walker evaluation (>1 uses multiprocessing.Pool)",
-)
+parser.add_argument("--n-steps", type=int, default=400,
+                    help="MCMC steps (ignored when --converge is set)")
+parser.add_argument("--n-burn", type=int, default=100,
+                    help="Burn-in steps (ignored when --converge is set)")
+parser.add_argument("--n-processes", type=int, default=1,
+                    help="Parallel processes for emcee walker evaluation")
+
+# Tau-based convergence
+parser.add_argument("--converge", action="store_true",
+                    help="Run until autocorrelation time stabilises")
+parser.add_argument("--check-interval", type=int, default=500,
+                    help="Steps between convergence checks")
+parser.add_argument("--tau-factor", type=float, default=50.0,
+                    help="Require N > tau_factor * max(tau)")
+parser.add_argument("--tau-rtol", type=float, default=0.01,
+                    help="Require relative tau change < rtol")
+parser.add_argument("--max-steps", type=int, default=10000,
+                    help="Hard cap on total MCMC steps")
+
+# Galaxy-specific physical parameters
+parser.add_argument("--vmax", type=float, default=200.0,
+                    help="Peak circular velocity (km/s), held fixed")
+parser.add_argument("--r-scale", type=float, default=3.0,
+                    help="Scale radius (arcsec), held fixed")
+
 args = parser.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -82,69 +77,16 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
-# Compare-only mode (no data loading required)
+# Imports (deferred so --help is fast)
 # ---------------------------------------------------------------------------
-def print_comparison(results_dir: Path) -> None:
-    """Load saved core + cusp results and print BIC comparison."""
-    core_path = results_dir / "core_result.npz"
-    cusp_path = results_dir / "cusp_result.npz"
-
-    for p in (core_path, cusp_path):
-        if not p.exists():
-            log.error("Missing result file: %s", p)
-            sys.exit(1)
-
-    core_res = np.load(core_path)
-    cusp_res = np.load(cusp_path)
-
-    n_data = int(core_res["n_data"])
-    k = int(core_res["n_params"])
-
-    bic_core = float(core_res["chi2"]) + k * np.log(n_data)
-    bic_cusp = float(cusp_res["chi2"]) + k * np.log(n_data)
-    delta_bic = bic_cusp - bic_core
-
-    log.info("=" * 55)
-    log.info("COMPARISON  (%s)", results_dir)
-    log.info("-" * 55)
-    log.info("%-25s %12s %12s", "Metric", "Core", "Cusp")
-    log.info("%-25s %12.2f %12.2f", "chi2",
-             float(core_res["chi2"]), float(cusp_res["chi2"]))
-    log.info("%-25s %12.6f %12.6f", "Reduced chi2",
-             float(core_res["reduced_chi2"]), float(cusp_res["reduced_chi2"]))
-    log.info("%-25s %12.2f %12.2f", "BIC", bic_core, bic_cusp)
-    log.info("-" * 55)
-    log.info("%-25s %12.2f", "Delta-BIC (cusp - core)", delta_bic)
-    if delta_bic > 6:
-        log.info("Strong evidence for CORE over cusp.")
-    elif delta_bic < -6:
-        log.info("Strong evidence for CUSP over core.")
-    else:
-        log.info("No strong preference (|Delta-BIC| < 6).")
-    log.info("=" * 55)
-
-
-if args.model == "compare":
-    print_comparison(outdir)
-    sys.exit(0)
-
-# ---------------------------------------------------------------------------
-# From here on we need data — validate
-# ---------------------------------------------------------------------------
-if args.data is None:
-    parser.error("--data is required when --model is not 'compare'")
-
 from uvfit import UVDataset, Fitter
-from uvfit.forward_model import KinMSModel
+from uvfit.forward_model import gNFWKinMSModel
 
 # ---------------------------------------------------------------------------
 # Source parameters
 # ---------------------------------------------------------------------------
 VSYS = 13583.0        # systemic velocity, km/s
-VMAX = 200.0          # max rotation velocity, km/s
-R_SCALE = 5.0         # scale radius, arcsec
 PA_INIT = 147.4       # position angle, degrees
 CELLSIZE = 0.2        # arcsec/pixel
 NX = NY = 256         # spatial pixels
@@ -152,12 +94,16 @@ VEL_BUFFER = 100.0    # km/s padding beyond ±Vmax
 F_REST = 230.538e9    # CO(2-1) rest frequency, Hz
 C_KMS = 299792.458    # speed of light, km/s
 
+VMAX = args.vmax
+R_SCALE = args.r_scale
+
 # ---------------------------------------------------------------------------
-# Load and trim data (free full arrays ASAP to reduce peak RAM)
+# Load and trim data
 # ---------------------------------------------------------------------------
 log.info("Loading data from %s", args.data)
-log.info("Precision: %s  |  Processes: %d  |  Model: %s",
-         args.precision, args.n_processes, args.model)
+log.info("Precision: %s  |  Processes: %d  |  Converge: %s",
+         args.precision, args.n_processes, args.converge)
+log.info("Vmax: %.1f km/s  |  r_scale: %.1f arcsec", VMAX, R_SCALE)
 t0 = time.time()
 d = np.load(args.data)
 u_all, v_all = d["u"], d["v"]
@@ -204,20 +150,19 @@ log.info(
 )
 
 # ---------------------------------------------------------------------------
-# Velocity and surface-brightness profiles
+# Model setup
 # ---------------------------------------------------------------------------
 radius = np.arange(0.01, 100, 0.1)
 sbprof = np.exp(-radius / R_SCALE)
 
-# Core (pseudo-isothermal)
-x_core = radius / R_SCALE
-v_core = VMAX * np.sqrt(1.0 - np.arctan(x_core) / x_core)
-
-# Cusp (NFW)
-x_nfw = radius / R_SCALE
-g_nfw = np.log(1.0 + x_nfw) - x_nfw / (1.0 + x_nfw)
-g_over_x = g_nfw / x_nfw
-v_cusp = VMAX * np.sqrt(g_over_x / np.max(g_over_x))
+model = gNFWKinMSModel(
+    vmax=VMAX, r_scale=R_SCALE, radius=radius,
+    xs=NX, ys=NY, vs=n_chan_trim,
+    cell_size_arcsec=CELLSIZE, channel_width_kms=dv_kms,
+    sbprof=sbprof, sbrad=radius,
+    precision=args.precision,
+)
+fitter = Fitter(uvdata=uvdata, forward_model=model)
 
 init_params = {
     "inc": 15.0,
@@ -225,92 +170,90 @@ init_params = {
     "flux": 1.0,
     "vsys": 0.0,
     "gas_sigma": 10.0,
+    "gamma": 0.5,
 }
 
 n_data = 2 * uvdata.vis_data.size
 n_params = len(init_params)
 
 # ---------------------------------------------------------------------------
-# Fit helper
+# Gradient pre-fit
 # ---------------------------------------------------------------------------
-
-def run_fit(label: str, velprof: np.ndarray) -> None:
-    """Run gradient + MCMC for one velocity profile and save results."""
-    log.info("=" * 60)
-    log.info("Starting %s model", label)
-
-    model = KinMSModel(
-        xs=NX, ys=NY, vs=n_chan_trim,
-        cell_size_arcsec=CELLSIZE, channel_width_kms=dv_kms,
-        sbprof=sbprof, velprof=velprof, sbrad=radius, velrad=radius,
-        precision=args.precision,
-    )
-    fitter = Fitter(uvdata=uvdata, forward_model=model, backend=args.backend)
-
-    # --- Gradient fit ---
-    log.info("[%s] Running L-BFGS-B...", label)
-    t0 = time.time()
-    result_grad = fitter.fit(initial_params=init_params, method="L-BFGS-B")
-    log.info(
-        "[%s] L-BFGS-B done in %.1fs  rchi2=%.6f  params=%s",
-        label, time.time() - t0, result_grad.reduced_chi2, result_grad.params,
-    )
-
-    # --- MCMC ---
-    log.info(
-        "[%s] Running emcee (%d walkers, %d steps, %d burn-in, %d processes)...",
-        label, args.n_walkers, args.n_steps, args.n_burn, args.n_processes,
-    )
-    t0 = time.time()
-    result_mcmc = fitter.fit(
-        initial_params=result_grad.params,
-        method="emcee",
-        n_walkers=args.n_walkers,
-        n_steps=args.n_steps,
-        n_burn=args.n_burn,
-        n_processes=args.n_processes,
-    )
-    log.info(
-        "[%s] MCMC done in %.1fs  rchi2=%.6f  MAP=%s",
-        label, time.time() - t0, result_mcmc.reduced_chi2, result_mcmc.params,
-    )
-
-    # --- Save ---
-    tag = label.lower()
-    np.savez(
-        outdir / f"{tag}_result.npz",
-        params=np.array(list(result_mcmc.params.values())),
-        param_names=np.array(list(result_mcmc.params.keys())),
-        chi2=result_mcmc.chi2,
-        reduced_chi2=result_mcmc.reduced_chi2,
-        n_data=n_data,
-        n_params=n_params,
-        chains=result_mcmc.chains,
-        log_prob=result_mcmc.log_prob,
-    )
-    log.info("[%s] Results saved to %s", label, outdir / f"{tag}_result.npz")
-
-    best_cube = model.generate_cube(result_mcmc.params)
-    np.savez_compressed(
-        outdir / f"{tag}_bestfit_cube.npz",
-        cube=best_cube,
-        vel=vel_trim,
-    )
-    log.info("[%s] Best-fit cube saved", label)
-
+log.info("Running L-BFGS-B...")
+t0 = time.time()
+result_grad = fitter.fit(initial_params=init_params, method="L-BFGS-B")
+log.info(
+    "L-BFGS-B done in %.1fs  rchi2=%.6f  params=%s",
+    time.time() - t0, result_grad.reduced_chi2, result_grad.params,
+)
 
 # ---------------------------------------------------------------------------
-# Run requested model(s)
+# MCMC
 # ---------------------------------------------------------------------------
-t_total = time.time()
+if args.converge:
+    log.info(
+        "Running emcee with tau convergence (%d walkers, check every %d steps, "
+        "max %d steps, %d processes)...",
+        args.n_walkers, args.check_interval, args.max_steps, args.n_processes,
+    )
+else:
+    log.info(
+        "Running emcee (%d walkers, %d steps, %d burn-in, %d processes)...",
+        args.n_walkers, args.n_steps, args.n_burn, args.n_processes,
+    )
 
-if args.model in ("core", "both"):
-    run_fit("Core", v_core)
-if args.model in ("cusp", "both"):
-    run_fit("Cusp", v_cusp)
+t0 = time.time()
+result_mcmc = fitter.fit(
+    initial_params=result_grad.params,
+    method="emcee",
+    n_walkers=args.n_walkers,
+    n_steps=args.n_steps,
+    n_burn=args.n_burn,
+    n_processes=args.n_processes,
+    converge=args.converge,
+    check_interval=args.check_interval,
+    tau_factor=args.tau_factor,
+    tau_rtol=args.tau_rtol,
+    max_steps=args.max_steps,
+)
+log.info(
+    "MCMC done in %.1fs  rchi2=%.6f  MAP=%s",
+    time.time() - t0, result_mcmc.reduced_chi2, result_mcmc.params,
+)
+if result_mcmc.converged is not None:
+    log.info("Converged: %s", result_mcmc.converged)
+if result_mcmc.autocorr_time is not None:
+    log.info("Autocorrelation time: %s", result_mcmc.autocorr_time)
 
-# Print comparison when both models were run in the same invocation
-if args.model == "both":
-    print_comparison(outdir)
+# ---------------------------------------------------------------------------
+# Save results
+# ---------------------------------------------------------------------------
+save_dict = dict(
+    params=np.array(list(result_mcmc.params.values())),
+    param_names=np.array(list(result_mcmc.params.keys())),
+    chi2=result_mcmc.chi2,
+    reduced_chi2=result_mcmc.reduced_chi2,
+    n_data=n_data,
+    n_params=n_params,
+    chains=result_mcmc.chains,
+    log_prob=result_mcmc.log_prob,
+    vmax=VMAX,
+    r_scale=R_SCALE,
+)
+if result_mcmc.autocorr_time is not None:
+    save_dict["autocorr_time"] = result_mcmc.autocorr_time
+if result_mcmc.converged is not None:
+    save_dict["converged"] = result_mcmc.converged
 
-log.info("Total runtime: %.1f min", (time.time() - t_total) / 60)
+np.savez(outdir / "result.npz", **save_dict)
+log.info("Results saved to %s", outdir / "result.npz")
+
+best_cube = model.generate_cube(result_mcmc.params)
+np.savez_compressed(
+    outdir / "bestfit_cube.npz",
+    cube=best_cube,
+    vel=vel_trim,
+)
+log.info("Best-fit cube saved")
+
+log.info("Total runtime: %.1f min", (time.time() - t0) / 60)

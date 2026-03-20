@@ -16,10 +16,11 @@ This installs all dependencies including
 conversion and [UVfit](https://github.com/drtobybrown/uvfit) for
 visibility-space fitting.
 
-## Cusp vs Core
+## gNFW Kinematic Fitting
 
-Compare pseudo-isothermal (core) and NFW (cusp) dark-matter velocity profiles
-by fitting KinMS kinematic models directly to the visibilities.
+Fit a generalized NFW (gNFW) velocity profile directly to visibilities using
+KinMS kinematic models.  The inner density slope gamma is a free MCMC
+parameter: gamma = 0 is a flat core, gamma = 1 is a classical NFW cusp.
 
 ### Interactive notebook
 
@@ -33,12 +34,20 @@ parameters for quick iteration.
 ### Production run (local)
 
 ```bash
+# Fixed-step run
 python run_kgas_full.py \
   --data /path/to/KILOGAS007.npz \
   --outdir ./results/KILOGAS007 \
-  --model both \
   --precision single \
   --n-processes 8
+
+# Tau-based convergence (recommended for production)
+python run_kgas_full.py \
+  --data /path/to/KILOGAS007.npz \
+  --outdir ./results/KILOGAS007 \
+  --precision single \
+  --n-processes 8 \
+  --converge --check-interval 500 --max-steps 10000
 ```
 
 ### Production run (CANFAR batch)
@@ -49,12 +58,12 @@ bash submit_kgas.sh --dry  # preview without submitting
 ```
 
 Edit `submit_kgas.sh` to set your container image, CANFAR project paths,
-and the list of galaxy IDs to process.
+per-galaxy scale radii, and the list of galaxy IDs to process.
 
-### Compare results (no fitting)
+### View results
 
 ```bash
-python run_kgas_full.py --outdir ./results/KILOGAS007 --model compare
+jupyter notebook plot_results.ipynb
 ```
 
 ## Output
@@ -63,8 +72,6 @@ Results are saved per galaxy to `{outdir}/`:
 
 | File | Contents |
 |------|----------|
-| `core_result.npz` | MAP params, chi2, MCMC chains |
-| `cusp_result.npz` | MAP params, chi2, MCMC chains |
-| `core_bestfit_cube.npz` | Best-fit model cube + velocity axis |
-| `cusp_bestfit_cube.npz` | Best-fit model cube + velocity axis |
+| `result.npz` | MAP params, chi2, MCMC chains, autocorrelation time |
+| `bestfit_cube.npz` | Best-fit model cube + velocity axis |
 | `run.log` | Full runtime log |

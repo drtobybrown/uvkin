@@ -1,8 +1,8 @@
 #!/bin/bash
-# Submit cusp vs core kinematic fitting jobs on CANFAR.
+# Submit gNFW kinematic fitting jobs on CANFAR.
 #
-# Loops over galaxy IDs, submitting two headless batch jobs per galaxy
-# (one core, one cusp) in flexible mode (elastic 1–8 cores, 4–32 GB).
+# One headless batch job per galaxy in flexible mode
+# (elastic 1-8 cores, 4-32 GB).
 #
 # Prerequisites:
 #   - canfar CLI installed and authenticated (canfar auth login)
@@ -15,17 +15,17 @@
 
 set -euo pipefail
 
-# ── Galaxy IDs to process ──
-GALAXY_IDS=(
-    KILOGAS007
-    # KILOGAS066
-    # KILOGAS123
+# ── Galaxy IDs and per-galaxy parameters ──
+# Format: "ID:R_SCALE"
+GALAXY_CONFIGS=(
+    "KILOGAS007:3"
+    # "KILOGAS066:5"
+    # "KILOGAS123:5"
 )
 
 # ── Shared configuration ──
 IMAGE="images.canfar.net/skaha/astroml:latest"
 CONDA_ENV="uvkin"
-BACKEND="numpy"
 PRECISION="single"
 N_PROCESSES=8
 
@@ -34,9 +34,10 @@ VIS_DIR="${ARC_BASE}/visibilities"
 RESULTS_BASE="${ARC_BASE}/results"
 SCRIPT="${ARC_BASE}/uvkin/run_kgas_full.py"
 
+VMAX=200
 N_WALKERS=32
-N_STEPS=400
-N_BURN=100
+CHECK_INTERVAL=500
+MAX_STEPS=10000
 
 DRY_RUN=false
 if [[ "${1:-}" == "--dry" ]]; then
@@ -44,46 +45,44 @@ if [[ "${1:-}" == "--dry" ]]; then
 fi
 
 echo "=============================================="
-echo "CANFAR batch submission — cusp vs core fitting"
+echo "CANFAR batch submission — gNFW kinematic fitting"
 echo "=============================================="
 echo "Image     : ${IMAGE}"
 echo "Precision : ${PRECISION}"
 echo "Processes : ${N_PROCESSES}"
-echo "Mode      : flexible (elastic 1–8 cores, 4–32 GB)"
-echo "Galaxies  : ${GALAXY_IDS[*]}"
+echo "Mode      : flexible (elastic 1-8 cores, 4-32 GB)"
+echo "Converge  : tau-based (check every ${CHECK_INTERVAL} steps, max ${MAX_STEPS})"
 echo ""
 
 if [[ "${DRY_RUN}" == false ]]; then
     canfar auth login
 fi
 
-for GAL in "${GALAXY_IDS[@]}"; do
+for ENTRY in "${GALAXY_CONFIGS[@]}"; do
+    GAL="${ENTRY%%:*}"
+    R_SCALE="${ENTRY##*:}"
     DATA="${VIS_DIR}/${GAL}.npz"
     OUTDIR="${RESULTS_BASE}/${GAL}"
 
-    BASE_CMD="conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --backend ${BACKEND} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-steps ${N_STEPS} --n-burn ${N_BURN} --n-processes ${N_PROCESSES}"
+    CMD="conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --vmax ${VMAX} --r-scale ${R_SCALE} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
+
+    JOB_NAME="$(echo "${GAL}" | tr '[:upper:]' '[:lower:]')-gnfw"
 
     echo "----------------------------------------------"
-    echo "${GAL}"
+    echo "${GAL}  (r_scale=${R_SCALE}\")"
     echo "  data   : ${DATA}"
     echo "  outdir : ${OUTDIR}"
+    echo "  job    : ${JOB_NAME}"
 
-    for MODEL in core cusp; do
-        CMD="${BASE_CMD} --model ${MODEL}"
-        JOB_NAME="$(echo "${GAL}" | tr '[:upper:]' '[:lower:]')-${MODEL}"   # lowercase galaxy ID
-
-        echo "  ${MODEL}: ${JOB_NAME}"
-
-        if [[ "${DRY_RUN}" == true ]]; then
-            echo "    [DRY] ${CMD}"
-        else
-            canfar launch \
-              --name "${JOB_NAME}" \
-              headless "${IMAGE}" \
-              -- ${CMD}
-            echo "    -> submitted"
-        fi
-    done
+    if [[ "${DRY_RUN}" == true ]]; then
+        echo "  [DRY] ${CMD}"
+    else
+        canfar launch \
+          --name "${JOB_NAME}" \
+          headless "${IMAGE}" \
+          -- ${CMD}
+        echo "  -> submitted"
+    fi
 done
 
 echo ""
@@ -94,10 +93,5 @@ else
     echo "All jobs submitted. Monitor with:"
     echo "  canfar ps"
     echo "  canfar logs -f <session-id>"
-    echo ""
-    echo "After jobs finish, compare results:"
-    for GAL in "${GALAXY_IDS[@]}"; do
-        echo "  python ${SCRIPT} --outdir ${RESULTS_BASE}/${GAL} --model compare"
-    done
 fi
 echo "=============================================="
