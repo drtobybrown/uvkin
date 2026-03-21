@@ -146,8 +146,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Imports (deferred so --help is fast)
 # ---------------------------------------------------------------------------
+from empirical_bounds import BoundedGNFWKinMSModel, get_empirical_bounds
 from uvfit import UVDataset, Fitter
-from uvfit.forward_model import gNFWKinMSModel
 
 # ---------------------------------------------------------------------------
 # Source parameters (grid + cosmology: kgas_config.SHARED; galaxy block via --kgas-id)
@@ -210,6 +210,25 @@ gc.collect()
 log.info(
     "Trimmed to %d channels (%.0f – %.0f km/s), dv=%.3f km/s",
     n_chan_trim, vel_trim.min(), vel_trim.max(), dv_kms,
+)
+
+if _cfg is not None:
+    flux_int = _cfg.flux_int_jy_kms / dv_kms
+    if abs(dv_kms - _cfg.channel_width_kms) > 0.01:
+        log.warning(
+            "Median dv from file (%.6f km/s) != kgas_config channel_width_kms (%.6f); "
+            "flux_int guess uses file dv.",
+            dv_kms,
+            _cfg.channel_width_kms,
+        )
+else:
+    flux_int = 1.0
+
+empirical_bounds = get_empirical_bounds(
+    vsys_int=0.0,
+    flux_int=flux_int,
+    inc_int=INC_INIT,
+    pa_int=PA_INIT,
 )
 
 uvdata = UVDataset(
@@ -451,11 +470,20 @@ log.info("=" * 60)
 radius = np.arange(0.01, 100, 0.1)
 sbprof = np.exp(-radius / R_SCALE)
 
-model = gNFWKinMSModel(
-    vmax=VMAX, r_scale=R_SCALE, radius=radius,
-    xs=NX, ys=NY, vs=n_chan_trim,
-    cell_size_arcsec=CELLSIZE, channel_width_kms=dv_kms,
-    sbprof=sbprof, sbrad=radius,
+log.info("Empirical MCMC bounds: %s", empirical_bounds)
+
+model = BoundedGNFWKinMSModel(
+    empirical_bounds=empirical_bounds,
+    vmax=VMAX,
+    r_scale=R_SCALE,
+    radius=radius,
+    xs=NX,
+    ys=NY,
+    vs=n_chan_trim,
+    cell_size_arcsec=CELLSIZE,
+    channel_width_kms=dv_kms,
+    sbprof=sbprof,
+    sbrad=radius,
     precision=args.precision,
 )
 fitter = Fitter(uvdata=uvdata, forward_model=model)
@@ -463,7 +491,7 @@ fitter = Fitter(uvdata=uvdata, forward_model=model)
 init_params = {
     "inc": INC_INIT,
     "pa": PA_INIT,
-    "flux": 1.0,
+    "flux": flux_int,
     "vsys": 0.0,
     "gas_sigma": 10.0,
     "gamma": 0.5,

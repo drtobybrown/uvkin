@@ -15,6 +15,7 @@ dependencies:
   - ipykernel
   - pip
   - pip:
+    - pytest
     - kinms>=3.0
     - corner
     - tqdm
