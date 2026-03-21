@@ -71,9 +71,35 @@ parser.add_argument(
     action="store_true",
     help="Skip saving preflight PNGs (preflight_uv_hist2d.png, preflight_snr_profile.png)",
 )
+parser.add_argument(
+    "--kgas-id",
+    default=None,
+    metavar="ID",
+    help=(
+        "Optional catalog key (e.g. KGAS007): use pa_init/inc_init from kgas_config; "
+        "logs reference config alongside CLI args"
+    ),
+)
 
 args = parser.parse_args()
 LINE_WIDTH_KMS = float(args.line_width_kms) if args.line_width_kms is not None else (2.0 * args.vmax)
+
+from kgas_config import SHARED, format_config_log, get_galaxy_config
+
+CELLSIZE = SHARED.cellsize_arcsec
+NX = SHARED.nx
+NY = SHARED.ny
+VEL_BUFFER = SHARED.vel_buffer_kms
+F_REST = SHARED.f_rest_hz
+C_KMS = SHARED.c_kms
+
+if args.kgas_id is not None:
+    _cfg = get_galaxy_config(args.kgas_id)
+    PA_INIT = _cfg.pa_init
+    INC_INIT = _cfg.inc_init
+else:
+    PA_INIT = 147.4
+    INC_INIT = 15.0
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -98,18 +124,24 @@ from uvfit import UVDataset, Fitter
 from uvfit.forward_model import gNFWKinMSModel
 
 # ---------------------------------------------------------------------------
-# Source parameters
+# Source parameters (grid + cosmology: kgas_config.SHARED; pa/inc: CLI or --kgas-id)
 # ---------------------------------------------------------------------------
 VSYS = args.vsys      # systemic velocity, km/s (line mask + cosmology)
-PA_INIT = 147.4       # position angle, degrees
-CELLSIZE = 0.2        # arcsec/pixel
-NX = NY = 256         # spatial pixels
-VEL_BUFFER = 100.0    # km/s padding beyond ±Vmax
-F_REST = 230.538e9    # CO(2-1) rest frequency, Hz
-C_KMS = 299792.458    # speed of light, km/s
-
 VMAX = args.vmax
 R_SCALE = args.r_scale
+
+log.info("kgas_config reference:")
+for _line in format_config_log(args.kgas_id).splitlines():
+    log.info("  %s", _line)
+if args.kgas_id is not None:
+    log.info(
+        "CLI may override --vsys/--vmax/--r-scale/--data vs reference GALAXY block."
+    )
+log.info(
+    "Effective run: vsys=%.1f vmax=%.1f r_scale=%.1f pa_init=%.1f inc_init=%.1f "
+    "cellsize=%.3f (kgas_id=%s)",
+    VSYS, VMAX, R_SCALE, PA_INIT, INC_INIT, CELLSIZE, args.kgas_id,
+)
 
 # ---------------------------------------------------------------------------
 # Load and trim data
@@ -378,7 +410,7 @@ model = gNFWKinMSModel(
 fitter = Fitter(uvdata=uvdata, forward_model=model)
 
 init_params = {
-    "inc": 15.0,
+    "inc": INC_INIT,
     "pa": PA_INIT,
     "flux": 1.0,
     "vsys": 0.0,

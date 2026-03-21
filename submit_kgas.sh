@@ -64,8 +64,10 @@ for ENTRY in "${GALAXY_CONFIGS[@]}"; do
     R_SCALE="${ENTRY##*:}"
     DATA="${VIS_DIR}/${GAL}.npz"
     OUTDIR="${RESULTS_BASE}/${GAL}"
+    # KILOGAS007 -> KGAS007 (must match keys in kgas_config.GALAXY_CONFIGS)
+    KGAS_ID="KGAS${GAL#KILOGAS}"
 
-    CMD="MPLBACKEND=Agg conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --vmax ${VMAX} --r-scale ${R_SCALE} --vsys ${VSYS_KMS} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
+    CMD="MPLBACKEND=Agg conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --vmax ${VMAX} --r-scale ${R_SCALE} --vsys ${VSYS_KMS} --kgas-id ${KGAS_ID} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
 
     JOB_NAME="$(echo "${GAL}" | tr '[:upper:]' '[:lower:]')-gnfw"
 
