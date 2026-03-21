@@ -501,17 +501,6 @@ n_data = 2 * uvdata.vis_data.size
 n_params = len(init_params)
 
 # ---------------------------------------------------------------------------
-# Gradient pre-fit
-# ---------------------------------------------------------------------------
-log.info("Running L-BFGS-B...")
-t0 = time.time()
-result_grad = fitter.fit(initial_params=init_params, method="L-BFGS-B")
-log.info(
-    "L-BFGS-B done in %.1fs  rchi2=%.6f  params=%s",
-    time.time() - t0, result_grad.reduced_chi2, result_grad.params,
-)
-
-# ---------------------------------------------------------------------------
 # MCMC
 # ---------------------------------------------------------------------------
 if args.converge:
@@ -528,7 +517,7 @@ else:
 
 t0 = time.time()
 result_mcmc = fitter.fit(
-    initial_params=result_grad.params,
+    initial_params=init_params,
     method="emcee",
     n_walkers=args.n_walkers,
     n_steps=args.n_steps,
