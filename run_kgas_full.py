@@ -7,11 +7,11 @@ using UVfit + KinMS. The inner slope gamma is a free MCMC parameter:
 gamma = 0 -> flat core, gamma = 1 -> classical NFW cusp.
 
 Usage:
-    # Fixed-step run
-    python run_kgas_full.py --data KILOGAS007.npz --outdir results/KILOGAS007
+    # Fixed-step run (galaxy parameters from kgas_config)
+    python run_kgas_full.py --data KILOGAS007.npz --outdir results/KILOGAS007 --kgas-id KGAS007
 
     # Tau-based convergence
-    python run_kgas_full.py --data KILOGAS007.npz --outdir results/KILOGAS007 --converge
+    python run_kgas_full.py --data KILOGAS007.npz --outdir results/KILOGAS007 --kgas-id KGAS007 --converge
 """
 
 import argparse
@@ -53,14 +53,19 @@ parser.add_argument("--tau-rtol", type=float, default=0.01,
 parser.add_argument("--max-steps", type=int, default=10000,
                     help="Hard cap on total MCMC steps")
 
-# Galaxy-specific physical parameters
-parser.add_argument("--vmax", type=float, default=200.0,
-                    help="Peak circular velocity (km/s), held fixed")
-parser.add_argument("--r-scale", type=float, default=3.0,
-                    help="Scale radius (arcsec), held fixed")
+# Galaxy-specific physical parameters (defaults from kgas_config when --kgas-id is set)
 parser.add_argument(
-    "--vsys", type=float, default=13583.0,
-    help="Systemic velocity (km/s); used for line mask and cosmology distance",
+    "--vmax", type=float, default=None,
+    help="Peak circular velocity (km/s), held fixed. Default: from obs band vs vsys if --kgas-id, else 200",
+)
+parser.add_argument(
+    "--r-scale", type=float, default=None,
+    help="Scale radius (arcsec), held fixed. Default: kgas_config r_scale if --kgas-id, else 3",
+)
+parser.add_argument(
+    "--vsys", type=float, default=None,
+    help="Systemic velocity (km/s); line mask (no --kgas-id) and cosmology. "
+    "Default: kgas_config vsys if --kgas-id, else 13583",
 )
 parser.add_argument(
     "--line-width-kms", type=float, default=None,
@@ -76,15 +81,19 @@ parser.add_argument(
     default=None,
     metavar="ID",
     help=(
-        "Optional catalog key (e.g. KGAS007): use pa_init/inc_init from kgas_config; "
-        "logs reference config alongside CLI args"
+        "Catalog key (e.g. KGAS007): pa/inc/vsys/r_scale and obs_freq_range_ghz from kgas_config; "
+        "vmax defaults from that band vs vsys. Omit --vsys/--vmax/--r-scale to use catalog/band defaults."
     ),
 )
 
 args = parser.parse_args()
-LINE_WIDTH_KMS = float(args.line_width_kms) if args.line_width_kms is not None else (2.0 * args.vmax)
 
-from kgas_config import SHARED, format_config_log, get_galaxy_config
+from kgas_config import (
+    SHARED,
+    format_config_log,
+    get_galaxy_config,
+    vmax_circ_from_obs_band,
+)
 
 CELLSIZE = SHARED.cellsize_arcsec
 NX = SHARED.nx
@@ -97,9 +106,26 @@ if args.kgas_id is not None:
     _cfg = get_galaxy_config(args.kgas_id)
     PA_INIT = _cfg.pa_init
     INC_INIT = _cfg.inc_init
+    VSYS = args.vsys if args.vsys is not None else _cfg.vsys
+    VMAX = (
+        args.vmax
+        if args.vmax is not None
+        else vmax_circ_from_obs_band(_cfg.obs_freq_range_ghz, VSYS)
+    )
+    R_SCALE = args.r_scale if args.r_scale is not None else _cfg.r_scale
 else:
+    _cfg = None
     PA_INIT = 147.4
     INC_INIT = 15.0
+    VSYS = args.vsys if args.vsys is not None else 13583.0
+    VMAX = args.vmax if args.vmax is not None else 200.0
+    R_SCALE = args.r_scale if args.r_scale is not None else 3.0
+
+LINE_WIDTH_KMS = (
+    float(args.line_width_kms)
+    if args.line_width_kms is not None
+    else (2.0 * VMAX)
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -124,18 +150,14 @@ from uvfit import UVDataset, Fitter
 from uvfit.forward_model import gNFWKinMSModel
 
 # ---------------------------------------------------------------------------
-# Source parameters (grid + cosmology: kgas_config.SHARED; pa/inc: CLI or --kgas-id)
+# Source parameters (grid + cosmology: kgas_config.SHARED; galaxy block via --kgas-id)
 # ---------------------------------------------------------------------------
-VSYS = args.vsys      # systemic velocity, km/s (line mask + cosmology)
-VMAX = args.vmax
-R_SCALE = args.r_scale
-
 log.info("kgas_config reference:")
 for _line in format_config_log(args.kgas_id).splitlines():
     log.info("  %s", _line)
 if args.kgas_id is not None:
     log.info(
-        "CLI may override --vsys/--vmax/--r-scale/--data vs reference GALAXY block."
+        "Using catalog vsys/r_scale and vmax from obs band vs vsys unless overridden on the CLI."
     )
 log.info(
     "Effective run: vsys=%.1f vmax=%.1f r_scale=%.1f pa_init=%.1f inc_init=%.1f "
@@ -160,8 +182,19 @@ log.info(
 )
 
 vel_all = C_KMS * (1.0 - freqs_all / F_REST)
-v_lo = VSYS - VMAX - VEL_BUFFER
-v_hi = VSYS + VMAX + VEL_BUFFER
+if _cfg is not None:
+    _lo_g, _hi_g = _cfg.obs_freq_range_ghz
+    _f_lo_hz = min(_lo_g, _hi_g) * 1e9
+    _f_hi_hz = max(_lo_g, _hi_g) * 1e9
+    _v_a = C_KMS * (1.0 - _f_lo_hz / F_REST)
+    _v_b = C_KMS * (1.0 - _f_hi_hz / F_REST)
+    v_lo_band = min(_v_a, _v_b)
+    v_hi_band = max(_v_a, _v_b)
+    v_lo = v_lo_band - VEL_BUFFER
+    v_hi = v_hi_band + VEL_BUFFER
+else:
+    v_lo = VSYS - VMAX - VEL_BUFFER
+    v_hi = VSYS + VMAX + VEL_BUFFER
 chan_mask = (vel_all >= v_lo) & (vel_all <= v_hi)
 
 freqs_trim = freqs_all[chan_mask]
@@ -203,21 +236,31 @@ import astropy.units as au
 
 log.info("=" * 60)
 log.info("PRE-FIT DIAGNOSTICS")
-if args.line_width_kms is None:
+if _cfg is not None:
+    log.info(
+        "Spectral trim + line mask from kgas_config obs_freq_range_ghz = %s GHz",
+        _cfg.obs_freq_range_ghz,
+    )
+elif args.line_width_kms is None:
     log.info(
         "Line mask full width = 2×vmax = %.1f km/s (override with --line-width-kms)",
         LINE_WIDTH_KMS,
     )
 
-# Channel masks: line = VSYS ± half-width (physics-motivated; avoids MAD picking
-# band edges / baseline steps). Off-line = rest of trimmed cube.
+# Channel masks: with --kgas-id, line = obs frequency band in velocity; else
+# VSYS ± half-width. Off-line = rest of trimmed cube.
 good = uvdata.weights > 0
 amp_abs = np.abs(uvdata.vis_data)
 snr2 = np.where(good, (amp_abs ** 2) * uvdata.weights, 0.0)
 mean_amp_chan = np.mean(amp_abs, axis=0)
-_line_hw = LINE_WIDTH_KMS * 0.5
-line_chan = (vel_trim >= VSYS - _line_hw) & (vel_trim <= VSYS + _line_hw)
-offline_chan = (vel_trim < VSYS - _line_hw) | (vel_trim > VSYS + _line_hw)
+if _cfg is not None:
+    line_chan = (vel_trim >= v_lo_band) & (vel_trim <= v_hi_band)
+    offline_chan = (vel_trim < v_lo_band) | (vel_trim > v_hi_band)
+    _line_hw = 0.5 * (v_hi_band - v_lo_band)
+else:
+    _line_hw = LINE_WIDTH_KMS * 0.5
+    line_chan = (vel_trim >= VSYS - _line_hw) & (vel_trim <= VSYS + _line_hw)
+    offline_chan = (vel_trim < VSYS - _line_hw) | (vel_trim > VSYS + _line_hw)
 n_line = int(line_chan.sum())
 n_off = int(offline_chan.sum())
 if n_line == 0 or n_off == 0:
@@ -232,11 +275,18 @@ if n_line == 0 or n_off == 0:
     offline_chan = ~line_chan
     n_line = int(line_chan.sum())
     n_off = int(offline_chan.sum())
-log.info(
-    "Line mask (diagnostics): %.1f km/s ≤ v ≤ %.1f km/s "
-    "(vsys=%.1f, full width=%.1f km/s) — %d ch line, %d ch off-line",
-    VSYS - _line_hw, VSYS + _line_hw, VSYS, LINE_WIDTH_KMS, n_line, n_off,
-)
+if _cfg is not None:
+    log.info(
+        "Line mask (diagnostics): %.1f km/s ≤ v ≤ %.1f km/s "
+        "(obs band width=%.1f km/s) — %d ch line, %d ch off-line",
+        v_lo_band, v_hi_band, v_hi_band - v_lo_band, n_line, n_off,
+    )
+else:
+    log.info(
+        "Line mask (diagnostics): %.1f km/s ≤ v ≤ %.1f km/s "
+        "(vsys=%.1f, full width=%.1f km/s) — %d ch line, %d ch off-line",
+        VSYS - _line_hw, VSYS + _line_hw, VSYS, LINE_WIDTH_KMS, n_line, n_off,
+    )
 
 # A. Weighted sums: all-channel metric is dominated by noise statistics (~sqrt(N*pi/2)/chan)
 integrated_snr_all = float(np.sqrt(np.nansum(snr2)))
@@ -257,7 +307,8 @@ log.info(
 if excess_power < 1.5:
     log.warning(
         "Excess line vs off-line median power = %.2f (< 1.5) — verify continuum "
-        "subtraction / bandpass and --vsys / Vmax (line width = 2×Vmax by default) before trusting MCMC",
+        "subtraction / bandpass and spectral masks (--vsys; obs band if --kgas-id; "
+        "else line width = 2×Vmax by default) before trusting MCMC",
         excess_power,
     )
 if line_integrated_snr < 10.0:

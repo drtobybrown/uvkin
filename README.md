@@ -29,15 +29,20 @@ jupyter notebook kgas_cusp_vs_core.ipynb
 ```
 
 Runs on the downsampled data (`KILOGAS007.small.npz`) with reduced MCMC
-parameters for quick iteration.
+parameters for quick iteration. Spectral trim and line/off-line masks follow
+`obs_freq_range_ghz` in `kgas_config.py` (plus `vel_buffer_kms`), matching
+`run_kgas_full.py` when `--kgas-id` is set. Without `--kgas-id`, the script
+uses `VSYS ± VMAX ± vel_buffer` for trim and `VSYS ± line_width/2` for the line
+mask (default line width `2×--vmax`).
 
 ### Production run (local)
 
 ```bash
-# Fixed-step run
+# Fixed-step run (vsys, r_scale from kgas_config; vmax from obs band vs vsys when --kgas-id is set)
 python run_kgas_full.py \
   --data /path/to/KILOGAS007.npz \
   --outdir ./results/KILOGAS007 \
+  --kgas-id KGAS007 \
   --precision single \
   --n-processes 8
 
@@ -45,9 +50,14 @@ python run_kgas_full.py \
 python run_kgas_full.py \
   --data /path/to/KILOGAS007.npz \
   --outdir ./results/KILOGAS007 \
+  --kgas-id KGAS007 \
   --precision single \
   --n-processes 8 \
   --converge --check-interval 500 --max-steps 10000
+
+# Optional overrides: --vsys, --vmax, --r-scale (defaults are catalog values with --kgas-id)
+# Optional line mask width (km/s); default is 2×vmax when not using obs-band masks
+python run_kgas_full.py --data ... --outdir ... --kgas-id KGAS007 --line-width-kms 400
 ```
 
 ### Production run (CANFAR batch)
@@ -58,7 +68,7 @@ bash submit_kgas.sh --dry  # preview without submitting
 ```
 
 Edit `submit_kgas.sh` to set your container image, CANFAR project paths,
-per-galaxy scale radii, and the list of galaxy IDs to process.
+and the list of `KILOGAS*` IDs to process (physical parameters come from `kgas_config`).
 
 ### View results
 

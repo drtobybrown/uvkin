@@ -13,7 +13,6 @@ class GalaxyConfig:
     kilogas_archive_id: str
     data_path_default: str
     vsys: float
-    vmax: float
     r_scale: float
     pa_init: float
     inc_init: float
@@ -26,7 +25,6 @@ GALAXY_CONFIGS: Dict[str, GalaxyConfig] = {
         kilogas_archive_id="KILOGAS007",
         data_path_default="/Users/thbrown/kilogas/DR1/visibilities/KILOGAS007.small.npz",
         vsys=13583.0,
-        vmax=100.0,
         r_scale=3.0,
         pa_init=147.4,
         inc_init=29.0,
@@ -36,7 +34,6 @@ GALAXY_CONFIGS: Dict[str, GalaxyConfig] = {
         kilogas_archive_id="KILOGAS066",
         data_path_default="/Users/thbrown/kilogas/DR1/visibilities/KILOGAS066.small.npz",
         vsys=8066.0,
-        vmax=200.0,
         r_scale=7.0,
         pa_init=13.8,
         inc_init=44.0,
@@ -65,6 +62,29 @@ SHARED = SharedConfig(
 )
 
 
+def vmax_circ_from_obs_band(
+    obs_freq_range_ghz: Tuple[float, float],
+    vsys_kms: float,
+    *,
+    f_rest_hz: float | None = None,
+    c_kms: float | None = None,
+) -> float:
+    """
+    Peak circular speed scale (km/s) for gNFW / KinMS: max of |v_lo − vsys| and
+    |v_hi − vsys|, where v_lo/v_hi are radio velocities at the obs band edges.
+    """
+    fr = SHARED.f_rest_hz if f_rest_hz is None else f_rest_hz
+    c = SHARED.c_kms if c_kms is None else c_kms
+    lo_g, hi_g = obs_freq_range_ghz
+    f_lo_hz = min(lo_g, hi_g) * 1e9
+    f_hi_hz = max(lo_g, hi_g) * 1e9
+    v_a = c * (1.0 - f_lo_hz / fr)
+    v_b = c * (1.0 - f_hi_hz / fr)
+    v_lo = min(v_a, v_b)
+    v_hi = max(v_a, v_b)
+    return max(abs(v_lo - vsys_kms), abs(v_hi - vsys_kms))
+
+
 def list_kgas_ids() -> List[str]:
     return sorted(GALAXY_CONFIGS.keys())
 
@@ -90,13 +110,14 @@ def format_config_log(kgas_id: str | None = None) -> str:
     if kgas_id is not None:
         g = get_galaxy_config(kgas_id)
         lo, hi = g.obs_freq_range_ghz
+        _vc = vmax_circ_from_obs_band(g.obs_freq_range_ghz, g.vsys)
         lines.extend(
             [
                 f"GALAXY {kgas_id}:",
                 f"  kilogas_archive_id: {g.kilogas_archive_id}",
                 f"  data_path_default: {g.data_path_default}",
                 f"  vsys: {g.vsys}",
-                f"  vmax: {g.vmax}",
+                f"  vmax_circ (from obs_freq_range_ghz vs vsys): {_vc:.2f}",
                 f"  r_scale: {g.r_scale}",
                 f"  pa_init: {g.pa_init}",
                 f"  inc_init: {g.inc_init}",
