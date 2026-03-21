@@ -58,8 +58,22 @@ parser.add_argument("--vmax", type=float, default=200.0,
                     help="Peak circular velocity (km/s), held fixed")
 parser.add_argument("--r-scale", type=float, default=3.0,
                     help="Scale radius (arcsec), held fixed")
+parser.add_argument(
+    "--vsys", type=float, default=13583.0,
+    help="Systemic velocity (km/s); used for line mask and cosmology distance",
+)
+parser.add_argument(
+    "--line-width-kms", type=float, default=None,
+    help="Full width of line mask (km/s), centered on --vsys; default is 2×--vmax",
+)
+parser.add_argument(
+    "--no-preflight-plots",
+    action="store_true",
+    help="Skip saving preflight PNGs (preflight_uv_hist2d.png, preflight_snr_profile.png)",
+)
 
 args = parser.parse_args()
+LINE_WIDTH_KMS = float(args.line_width_kms) if args.line_width_kms is not None else (2.0 * args.vmax)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -86,7 +100,7 @@ from uvfit.forward_model import gNFWKinMSModel
 # ---------------------------------------------------------------------------
 # Source parameters
 # ---------------------------------------------------------------------------
-VSYS = 13583.0        # systemic velocity, km/s
+VSYS = args.vsys      # systemic velocity, km/s (line mask + cosmology)
 PA_INIT = 147.4       # position angle, degrees
 CELLSIZE = 0.2        # arcsec/pixel
 NX = NY = 256         # spatial pixels
@@ -157,56 +171,174 @@ import astropy.units as au
 
 log.info("=" * 60)
 log.info("PRE-FIT DIAGNOSTICS")
+if args.line_width_kms is None:
+    log.info(
+        "Line mask full width = 2×vmax = %.1f km/s (override with --line-width-kms)",
+        LINE_WIDTH_KMS,
+    )
 
-# A. Integrated visibility SNR
-amp_line = np.abs(uvdata.vis_data)
-w_safe = np.where(uvdata.weights > 0, uvdata.weights, np.inf)
-sigma_vis = 1.0 / np.sqrt(w_safe)
-snr_per_vis = amp_line / sigma_vis
-integrated_snr = float(np.sqrt(np.sum(snr_per_vis ** 2)))
-snr_per_channel = np.sqrt(np.sum(snr_per_vis ** 2, axis=0))
-log.info("Integrated line SNR: %.1f", integrated_snr)
-if integrated_snr < 10:
-    log.warning("Integrated SNR < 10 — detection may be marginal")
+# Channel masks: line = VSYS ± half-width (physics-motivated; avoids MAD picking
+# band edges / baseline steps). Off-line = rest of trimmed cube.
+good = uvdata.weights > 0
+amp_abs = np.abs(uvdata.vis_data)
+snr2 = np.where(good, (amp_abs ** 2) * uvdata.weights, 0.0)
+mean_amp_chan = np.mean(amp_abs, axis=0)
+_line_hw = LINE_WIDTH_KMS * 0.5
+line_chan = (vel_trim >= VSYS - _line_hw) & (vel_trim <= VSYS + _line_hw)
+offline_chan = (vel_trim < VSYS - _line_hw) | (vel_trim > VSYS + _line_hw)
+n_line = int(line_chan.sum())
+n_off = int(offline_chan.sum())
+if n_line == 0 or n_off == 0:
+    log.warning(
+        "Line/off-line mask empty (trim window vs line width); "
+        "widening line mask to 80%% of trim span for diagnostics only",
+    )
+    v0, v1 = float(vel_trim.min()), float(vel_trim.max())
+    span = v1 - v0
+    mid = 0.5 * (v0 + v1)
+    line_chan = (vel_trim >= mid - 0.4 * span) & (vel_trim <= mid + 0.4 * span)
+    offline_chan = ~line_chan
+    n_line = int(line_chan.sum())
+    n_off = int(offline_chan.sum())
+log.info(
+    "Line mask (diagnostics): %.1f km/s ≤ v ≤ %.1f km/s "
+    "(vsys=%.1f, full width=%.1f km/s) — %d ch line, %d ch off-line",
+    VSYS - _line_hw, VSYS + _line_hw, VSYS, LINE_WIDTH_KMS, n_line, n_off,
+)
 
-# B. Radial visibility profile (q-plot) and q-threshold
+# A. Weighted sums: all-channel metric is dominated by noise statistics (~sqrt(N*pi/2)/chan)
+integrated_snr_all = float(np.sqrt(np.nansum(snr2)))
+snr2_per_chan = np.sum(snr2, axis=0)
+sum_snr2_line = float(np.sum(snr2_per_chan[line_chan]))
+median_off_per_chan = float(np.median(snr2_per_chan[offline_chan]))
+noise_expect_line = n_line * median_off_per_chan
+excess_power = sum_snr2_line / max(noise_expect_line, 1e-30)
+line_integrated_snr = float(np.sqrt(sum_snr2_line))
+log.info(
+    "All-channel sqrt(sum |V|^2 w) (misleadingly flat vs velocity): %.1f",
+    integrated_snr_all,
+)
+log.info(
+    "Line-channel sqrt(sum |V|^2 w): %.1f  |  excess vs off-line median: %.2f",
+    line_integrated_snr, excess_power,
+)
+if excess_power < 1.5:
+    log.warning(
+        "Excess line vs off-line median power = %.2f (< 1.5) — verify continuum "
+        "subtraction / bandpass and --vsys / Vmax (line width = 2×Vmax by default) before trusting MCMC",
+        excess_power,
+    )
+if line_integrated_snr < 10.0:
+    log.warning("Line-mask integrated SNR < 10 — marginal detection in uv plane")
+
+_mean_line = float(np.mean(mean_amp_chan[line_chan]))
+_mean_off = float(np.mean(mean_amp_chan[offline_chan]))
+if _mean_line < 1.05 * _mean_off:
+    log.warning(
+        "Mean |V| in line mask (%.4f) is not clearly above off-line (%.4f) — "
+        "possible continuum offset or wrong line mask",
+        _mean_line, _mean_off,
+    )
+
+# B. UV distance (m), weighted complex mean per bin (line channels), noise floor — matches preflight_snr_profile.png
+C_MS = 299792458.0
+ref_nu = float(np.median(uvdata.freqs))
+lam_m = C_MS / ref_nu
 q_all = np.sqrt(uvdata.u ** 2 + uvdata.v ** 2)
 q_max = float(np.max(q_all))
+uvdist_m = q_all * lam_m
 
-N_QBINS = 50
-q_edges = np.linspace(float(np.min(q_all)), q_max, N_QBINS + 1)
-q_centers = 0.5 * (q_edges[:-1] + q_edges[1:])
-amp_binned = np.zeros(N_QBINS)
-noise_floor = np.zeros(N_QBINS)
+N_BINS = 30
+uv_edges = np.linspace(0.0, float(np.max(uvdist_m)), N_BINS + 1)
+uv_centers = 0.5 * (uv_edges[:-1] + uv_edges[1:])
+amp_signal = np.zeros(N_BINS)
+noise_floor = np.zeros(N_BINS)
 
-for i in range(N_QBINS):
-    bl_mask = (q_all >= q_edges[i]) & (q_all < q_edges[i + 1])
-    n_bl = int(bl_mask.sum())
-    if n_bl == 0:
+for i in range(N_BINS):
+    bin_mask = (uvdist_m >= uv_edges[i]) & (uvdist_m < uv_edges[i + 1])
+    if not np.any(bin_mask):
         continue
-    amp_binned[i] = float(np.mean(np.abs(uvdata.vis_data[bl_mask, :]).mean(axis=1)))
-    w_bin = uvdata.weights[bl_mask, :]
-    w_bin_safe = np.where(w_bin > 0, w_bin, np.inf)
-    noise_floor[i] = float(np.sqrt(np.sum(1.0 / w_bin_safe)) / n_bl)
+    vis_line = uvdata.vis_data[bin_mask][:, line_chan]
+    w_line = uvdata.weights[bin_mask][:, line_chan]
+    vis_flat = vis_line.flatten()
+    w_flat = w_line.flatten()
+    valid_mask = w_flat > 0
+    if np.any(valid_mask):
+        vis_valid = vis_flat[valid_mask]
+        w_valid = w_flat[valid_mask]
+        weighted_complex_mean = np.sum(vis_valid * w_valid) / np.sum(w_valid)
+        amp_signal[i] = float(np.abs(weighted_complex_mean))
+        noise_floor[i] = 1.0 / np.sqrt(np.sum(w_valid))
 
-# C. Critical q and high-q SNR
+# C. Critical scale radius in UV (m) and high-UV SNR
 theta_core_rad = R_SCALE * np.pi / (180.0 * 3600.0)
 q_crit = 1.0 / theta_core_rad
-high_q_mask = (q_centers >= 0.5 * q_crit) & (q_centers <= q_max)
-if high_q_mask.any() and np.any(noise_floor[high_q_mask] > 0):
-    A_high = float(np.mean(amp_binned[high_q_mask]))
-    sigma_high = float(np.mean(noise_floor[high_q_mask]))
-    high_q_snr = A_high / sigma_high if sigma_high > 0 else np.inf
+q_crit_m = q_crit * lam_m
+high_uv_mask = uv_centers > q_crit_m
+if np.any(high_uv_mask) and np.any(noise_floor[high_uv_mask] > 0):
+    mean_high_uv_sig = float(np.mean(amp_signal[high_uv_mask]))
+    mean_high_uv_noise = float(np.mean(noise_floor[high_uv_mask]))
+    high_uv_snr = mean_high_uv_sig / mean_high_uv_noise if mean_high_uv_noise > 0 else np.inf
 else:
-    high_q_snr = 0.0
+    high_uv_snr = 0.0
 
 log.info("q_crit (1/theta_core): %.0f wavelengths", q_crit)
-log.info("q_max (longest baseline): %.0f wavelengths", q_max)
-log.info("High-q SNR (0.5*q_crit to q_max): %.1f", high_q_snr)
+log.info("q_crit UV distance: %.0f m (median nu = %.4f GHz)", q_crit_m, ref_nu / 1e9)
+log.info("Longest baseline UV: %.0f m", float(np.max(uvdist_m)))
+log.info("High-UV SNR (weighted mean, uv_centers > q_crit): %.1f", high_uv_snr)
 if q_max < q_crit:
     log.warning("q_max < q_crit — baselines do not reach the scale radius")
-if high_q_snr < 5:
-    log.warning("High-q SNR < 5 — gamma formally unconstrained at this resolution")
+if high_uv_snr < 5:
+    log.warning("High-UV SNR < 5 — gamma formally unconstrained at this resolution")
+
+# Preflight figures (2D density + SNR profile)
+if not args.no_preflight_plots:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm
+
+    uvdist_m_2d = np.repeat(uvdist_m[:, None], uvdata.vis_data.shape[1], axis=1)
+    valid_h2d = (uvdata.weights > 0) & (uvdist_m_2d > 0.1)
+    amp_valid = np.abs(uvdata.vis_data[valid_h2d])
+    uv_valid = uvdist_m_2d[valid_h2d]
+
+    fig1, ax1 = plt.subplots(figsize=(10, 6), facecolor="white")
+    _c, _xe, _ye, im = ax1.hist2d(
+        uv_valid, amp_valid, bins=(150, 150), cmap="viridis", norm=LogNorm()
+    )
+    fig1.colorbar(im, ax=ax1, label="Count (log scale)")
+    ax1.set_xlabel("UV distance (m)")
+    ax1.set_ylabel("Amplitude (|V|)")
+    ax1.set_xlim(left=0)
+    ax1.set_ylim(bottom=0)
+    plt.tight_layout()
+    fig1.savefig(outdir / "preflight_uv_hist2d.png", dpi=150)
+    plt.close(fig1)
+
+    fig2, ax2 = plt.subplots(figsize=(8, 5), facecolor="white")
+    ax2.step(uv_centers, amp_signal, where="mid", color="black", lw=2, label="Vector-averaged signal")
+    ax2.plot(uv_centers, noise_floor, color="gray", ls=":", label=r"$1\sigma$ noise floor")
+    ax2.plot(uv_centers, 3 * noise_floor, color="red", ls="--", label=r"$3\sigma$ detection limit")
+    ax2.axvline(q_crit_m, color="blue", ls="-", alpha=0.7, label=f"Core resolution (~{q_crit_m:.0f} m)")
+    ax2.axvspan(q_crit_m, uv_centers[-1], color="blue", alpha=0.1, label=f"High-UV (SNR: {high_uv_snr:.1f})")
+    ax2.set_yscale("log")
+    ax2.set_xlabel("UV distance (m)")
+    ax2.set_ylabel("Amplitude (|V|)")
+    ax2.set_title("Preflight: visibility SNR vs UV distance")
+    ax2.legend(loc="upper right")
+    plt.tight_layout()
+    fig2.savefig(outdir / "preflight_snr_profile.png", dpi=150)
+    plt.close(fig2)
+    del uvdist_m_2d, valid_h2d, amp_valid, uv_valid
+    log.info(
+        "Preflight plots saved: %s, %s",
+        outdir / "preflight_uv_hist2d.png",
+        outdir / "preflight_snr_profile.png",
+    )
+else:
+    log.info("Skipping preflight plots (--no-preflight-plots)")
 
 # D. Physical resolution
 z = VSYS / C_KMS
@@ -225,8 +357,8 @@ if R_phys_kpc > R_scale_kpc:
     log.warning("Physical resolution (%.2f kpc) > scale radius (%.2f kpc) "
                 "— data cannot resolve the inner profile", R_phys_kpc, R_scale_kpc)
 
-del amp_line, sigma_vis, snr_per_vis, snr_per_channel, q_all
-del amp_binned, noise_floor, q_centers, q_edges
+del amp_abs, snr2, mean_amp_chan, snr2_per_chan, q_all
+del amp_signal, noise_floor, uv_edges, uv_centers, uvdist_m, lam_m
 gc.collect()
 log.info("=" * 60)
 

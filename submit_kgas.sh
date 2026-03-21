@@ -35,6 +35,7 @@ RESULTS_BASE="${ARC_BASE}/results"
 SCRIPT="${ARC_BASE}/uvkin/run_kgas_full.py"
 
 VMAX=200
+VSYS_KMS=13583
 N_WALKERS=32
 CHECK_INTERVAL=500
 MAX_STEPS=10000
@@ -64,7 +65,7 @@ for ENTRY in "${GALAXY_CONFIGS[@]}"; do
     DATA="${VIS_DIR}/${GAL}.npz"
     OUTDIR="${RESULTS_BASE}/${GAL}"
 
-    CMD="conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --vmax ${VMAX} --r-scale ${R_SCALE} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
+    CMD="MPLBACKEND=Agg conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --vmax ${VMAX} --r-scale ${R_SCALE} --vsys ${VSYS_KMS} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
 
     JOB_NAME="$(echo "${GAL}" | tr '[:upper:]' '[:lower:]')-gnfw"
 
