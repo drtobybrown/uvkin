@@ -8,6 +8,7 @@ dependencies:
   - scipy>=1.10
   - matplotlib>=3.7
   - astropy>=5.3
+  - spectral-cube>=0.6
   - python-casacore>=3.5
   - pyuvdata>=2.4
   - emcee>=3.1

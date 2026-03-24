@@ -77,6 +77,17 @@ parser.add_argument(
     help="Skip saving preflight PNGs (preflight_uv_hist2d.png, preflight_snr_profile.png)",
 )
 parser.add_argument(
+    "--spectral-bin-factor",
+    type=int,
+    default=1,
+    metavar="N",
+    help=(
+        "Average N adjacent spectral channels with weights before fitting "
+        "(SNR ~ sqrt(N)). Truncates trailing channels if n_chan %% N != 0. "
+        "Use 1 for no binning."
+    ),
+)
+parser.add_argument(
     "--kgas-id",
     default=None,
     metavar="ID",
@@ -146,8 +157,128 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Imports (deferred so --help is fast)
 # ---------------------------------------------------------------------------
+from astropy.io import fits
+from astropy.wcs import WCS
+
 from empirical_bounds import BoundedGNFWKinMSModel, get_empirical_bounds
 from uvfit import UVDataset, Fitter
+
+
+def bin_channels(vis, weights, vel, freqs, bin_factor):
+    """
+    Weighted spectral binning: boost per-channel SNR by ~sqrt(N) for factor N.
+
+    For each baseline, V_b = sum_i(V_i * W_i) / sum_i(W_i) and W_b = sum_i(W_i).
+    Bins with zero total weight yield V_b = 0 and W_b = 0.
+
+    Parameters
+    ----------
+    vis : ndarray, shape (n_row, n_chan), complex
+    weights : ndarray, shape (n_row, n_chan), real
+    vel : ndarray, shape (n_chan,), float
+        Radio convention velocities (km s^-1).
+    freqs : ndarray, shape (n_chan,), float
+        Channel centre frequencies (Hz).
+    bin_factor : int
+        Number of adjacent channels per bin; must be >= 1.
+
+    Returns
+    -------
+    vis_b, weights_b, vel_b, freqs_b, n_dropped : tuple
+        Binned arrays and count of trailing channels dropped (0 if none).
+    """
+    if bin_factor < 1:
+        raise ValueError(f"bin_factor must be >= 1, got {bin_factor}")
+    if vis.shape != weights.shape:
+        raise ValueError("vis and weights must have the same shape")
+    n_chan = vis.shape[1]
+    if vel.shape[0] != n_chan or freqs.shape[0] != n_chan:
+        raise ValueError("vel and freqs must match spectral dimension of vis")
+
+    if bin_factor == 1:
+        return vis, weights, vel, freqs, 0
+
+    n_use = (n_chan // bin_factor) * bin_factor
+    n_drop = n_chan - n_use
+    if n_use == 0:
+        raise ValueError(
+            f"After binning by {bin_factor}, no full bins remain ({n_chan} channels)"
+        )
+
+    vis = vis[:, :n_use]
+    weights = weights[:, :n_use]
+    vel = vel[:n_use]
+    freqs = freqs[:n_use]
+
+    nrow, n_b = vis.shape[0], n_use // bin_factor
+    vis_r = vis.reshape(nrow, n_b, bin_factor)
+    w_r = weights.reshape(nrow, n_b, bin_factor)
+    w_sum = np.sum(w_r, axis=2)
+    numer = np.sum(vis_r * w_r, axis=2)
+    vis_b = np.divide(
+        numer,
+        w_sum,
+        out=np.zeros(numer.shape, dtype=numer.dtype),
+        where=w_sum > 0,
+    )
+    weights_b = w_sum.astype(weights.dtype, copy=False)
+    vel_b = np.mean(vel.reshape(n_b, bin_factor), axis=1)
+    freqs_b = np.mean(freqs.reshape(n_b, bin_factor), axis=1)
+    return vis_b, weights_b, vel_b, freqs_b, n_drop
+
+
+def write_bestfit_cube_fits(
+    path,
+    cube_vyx,
+    vel_kms,
+    *,
+    cellsize_arcsec,
+    f_rest_hz,
+):
+    """
+    Write a (v, y, x) model cube to FITS with a 3D WCS (RA, Dec, VRAD).
+
+    Phase centre (CRVAL1/2) uses a placeholder; replace with the true
+    field centre when available. Spectral axis is barycentric radio
+    velocity in m s^-1 (VRAD).
+    """
+    nv, ny, nx = cube_vyx.shape
+    if vel_kms.size != nv:
+        raise ValueError(
+            f"vel_kms length {vel_kms.size} != cube spectral axis {nv}"
+        )
+
+    vel64 = vel_kms.astype(np.float64, copy=False)
+    if vel64.size > 1:
+        cdelt3_ms = float(np.median(np.diff(vel64))) * 1000.0
+    else:
+        cdelt3_ms = 1.0
+
+    w = WCS(naxis=3)
+    w.wcs.crpix = [nx / 2.0 + 0.5, ny / 2.0 + 0.5, 1.0]
+    w.wcs.crval = [180.0, 45.0, float(vel64[0]) * 1000.0]
+    w.wcs.cdelt = np.array(
+        [-cellsize_arcsec / 3600.0, cellsize_arcsec / 3600.0, cdelt3_ms]
+    )
+    w.wcs.ctype = ["RA---SIN", "DEC--SIN", "VRAD"]
+    w.wcs.cunit = ["deg", "deg", "m/s"]
+
+    header = w.to_header()
+    header["RESTFRQ"] = (float(f_rest_hz), "Rest frequency (Hz)")
+    header["BUNIT"] = ("Jy/beam", "Brightness unit")
+    header["BMAJ"] = (cellsize_arcsec / 3600.0, "Beam major axis (deg)")
+    header["BMIN"] = (cellsize_arcsec / 3600.0, "Beam minor axis (deg)")
+    header["BPA"] = (0.0, "Beam position angle (deg)")
+    header.add_history("Model cube from uvkin run_kgas_full.py (KinMS gNFW fit).")
+    header.add_history(
+        "CRVAL1/CRVAL2 are placeholders; set to field centre for science use."
+    )
+
+    hdu = fits.PrimaryHDU(data=np.asarray(cube_vyx, dtype=np.float32), header=header)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    hdu.writeto(path, overwrite=True)
+
 
 # ---------------------------------------------------------------------------
 # Source parameters (grid + cosmology: kgas_config.SHARED; galaxy block via --kgas-id)
@@ -169,8 +300,13 @@ log.info(
 # Load and trim data
 # ---------------------------------------------------------------------------
 log.info("Loading data from %s", args.data)
-log.info("Precision: %s  |  Processes: %d  |  Converge: %s",
-         args.precision, args.n_processes, args.converge)
+log.info(
+    "Precision: %s  |  Processes: %d  |  Converge: %s  |  Spectral bin: %d",
+    args.precision,
+    args.n_processes,
+    args.converge,
+    args.spectral_bin_factor,
+)
 log.info("Vmax: %.1f km/s  |  r_scale: %.1f arcsec", VMAX, R_SCALE)
 t0 = time.time()
 d = np.load(args.data)
@@ -201,11 +337,43 @@ freqs_trim = freqs_all[chan_mask]
 vis_trim = d["vis"][:, chan_mask]
 weights_trim = d["weights"][:, chan_mask]
 vel_trim = vel_all[chan_mask]
-dv_kms = float(np.median(np.abs(np.diff(vel_trim))))
-n_chan_trim = int(chan_mask.sum())
 
 del d, freqs_all, vel_all
 gc.collect()
+
+n_chan_pre_bin = int(vis_trim.shape[1])
+if args.spectral_bin_factor > 1:
+    try:
+        vis_trim, weights_trim, vel_trim, freqs_trim, n_drop = bin_channels(
+            vis_trim,
+            weights_trim,
+            vel_trim,
+            freqs_trim,
+            args.spectral_bin_factor,
+        )
+    except ValueError as exc:
+        log.error("Spectral binning failed: %s", exc)
+        raise
+    if n_drop > 0:
+        log.warning(
+            "Spectral bin factor %d: dropped %d trailing channels "
+            "(%d -> %d)",
+            args.spectral_bin_factor,
+            n_drop,
+            n_chan_pre_bin,
+            vis_trim.shape[1],
+        )
+    log.info(
+        "Spectral bin factor %d: %d channels -> %d binned channels "
+        "(expect SNR ~ sqrt(%d) per channel)",
+        args.spectral_bin_factor,
+        n_chan_pre_bin,
+        vis_trim.shape[1],
+        args.spectral_bin_factor,
+    )
+
+dv_kms = float(np.median(np.abs(np.diff(vel_trim))))
+n_chan_trim = int(vis_trim.shape[1])
 
 log.info(
     "Trimmed to %d channels (%.0f – %.0f km/s), dv=%.3f km/s",
@@ -552,6 +720,7 @@ save_dict = dict(
     log_prob=result_mcmc.log_prob,
     vmax=VMAX,
     r_scale=R_SCALE,
+    spectral_bin_factor=args.spectral_bin_factor,
 )
 if result_mcmc.autocorr_time is not None:
     save_dict["autocorr_time"] = result_mcmc.autocorr_time
@@ -562,11 +731,18 @@ np.savez(outdir / "result.npz", **save_dict)
 log.info("Results saved to %s", outdir / "result.npz")
 
 best_cube = model.generate_cube(result_mcmc.params)
-np.savez_compressed(
-    outdir / "bestfit_cube.npz",
-    cube=best_cube,
-    vel=vel_trim,
-)
-log.info("Best-fit cube saved")
+cube_fits_path = outdir / "bestfit_cube.fits"
+try:
+    write_bestfit_cube_fits(
+        cube_fits_path,
+        best_cube,
+        vel_trim,
+        cellsize_arcsec=CELLSIZE,
+        f_rest_hz=F_REST,
+    )
+except OSError as exc:
+    log.error("Failed to write %s: %s", cube_fits_path, exc)
+    raise
+log.info("Best-fit cube saved to %s", cube_fits_path)
 
 log.info("Total runtime: %.1f min", (time.time() - t0) / 60)

@@ -13,8 +13,9 @@ conda activate uvkin
 
 This installs all dependencies including
 [ms2uvfit](https://github.com/drtobybrown/ms2uvfit) for measurement-set
-conversion and [UVfit](https://github.com/drtobybrown/uvfit) for
-visibility-space fitting.
+conversion, [UVfit](https://github.com/drtobybrown/uvfit) for
+visibility-space fitting, and [spectral-cube](https://spectral-cube.readthedocs.io/)
+for FITS model cubes and `plot_results.ipynb`.
 
 ## gNFW Kinematic Fitting
 
@@ -44,6 +45,7 @@ python run_kgas_full.py \
   --outdir ./results/KILOGAS007 \
   --kgas-id KGAS007 \
   --precision single \
+  --spectral-bin-factor 4 \
   --n-processes 8
 
 # Tau-based convergence (recommended for production)
@@ -52,6 +54,7 @@ python run_kgas_full.py \
   --outdir ./results/KILOGAS007 \
   --kgas-id KGAS007 \
   --precision single \
+  --spectral-bin-factor 4 \
   --n-processes 8 \
   --converge --check-interval 500 --max-steps 10000
 
@@ -83,5 +86,5 @@ Results are saved per galaxy to `{outdir}/`:
 | File | Contents |
 |------|----------|
 | `result.npz` | MAP params, chi2, MCMC chains, autocorrelation time |
-| `bestfit_cube.npz` | Best-fit model cube + velocity axis |
+| `bestfit_cube.fits` | Best-fit model cube (3D FITS + WCS; load with spectral-cube) |
 | `run.log` | Full runtime log |
