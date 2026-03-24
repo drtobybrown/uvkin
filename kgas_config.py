@@ -81,7 +81,7 @@ SHARED = SharedConfig(
     cellsize_arcsec=0.1,
     nx=256,
     ny=256,
-    vel_buffer_kms=100.0,
+    vel_buffer_kms=0.0,
     f_rest_hz=230.538e9,
     c_kms=299792.458,
 )
