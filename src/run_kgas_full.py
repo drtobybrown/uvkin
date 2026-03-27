@@ -660,7 +660,18 @@ elif args.line_width_kms is None:
         LINE_WIDTH_KMS,
     )
 
-# line_chan / offline_chan / n_line / n_off already set (post phase-centroid vis)
+# Recompute line_chan for the binned grid
+line_chan = compute_line_channel_mask(
+    vel_trim,
+    cfg=_cfg,
+    vsys=VSYS,
+    line_width_kms=LINE_WIDTH_KMS,
+    v_lo_band=v_lo_band if _cfg is not None else None,
+    v_hi_band=v_hi_band if _cfg is not None else None,
+)
+offline_chan = ~line_chan
+n_line = int(line_chan.sum())
+n_off = int(offline_chan.sum())
 good = uvdata.weights > 0
 amp_abs = np.abs(uvdata.vis_data)
 snr2 = np.where(good, (amp_abs ** 2) * uvdata.weights, 0.0)
