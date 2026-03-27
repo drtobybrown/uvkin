@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-# ── Galaxy IDs (vsys / r_scale / obs band from kgas_config; vmax from band vs vsys) ──
+# ── Galaxy IDs (catalog = uvkin_settings.yaml → galaxies:; vmax from obs band vs vsys) ──
 GALAXY_CONFIGS=(
     "KILOGAS007"
     # "KILOGAS066"
@@ -30,7 +30,10 @@ N_PROCESSES=8
 ARC_BASE="/arc/projects/KILOGAS/analysis/toby_sandbox"
 VIS_DIR="${ARC_BASE}/visibilities"
 RESULTS_BASE="${ARC_BASE}/results"
-SCRIPT="${ARC_BASE}/uvkin/run_kgas_full.py"
+UVKIN_DIR="${ARC_BASE}/uvkin"
+SCRIPT="${UVKIN_DIR}/run_kgas_full.py"
+# Shared / galaxies / aggregation (optional override; default is this file beside run_kgas_full.py)
+PIPELINE_SETTINGS="${UVKIN_DIR}/uvkin_settings.yaml"
 
 N_WALKERS=32
 CHECK_INTERVAL=500
@@ -58,17 +61,18 @@ fi
 for GAL in "${GALAXY_CONFIGS[@]}"; do
     DATA="${VIS_DIR}/${GAL}.npz"
     OUTDIR="${RESULTS_BASE}/${GAL}"
-    # KILOGAS007 -> KGAS007 (must match keys in kgas_config.GALAXY_CONFIGS)
+    # KILOGAS007 -> KGAS007 (must match keys under galaxies: in uvkin_settings.yaml)
     KGAS_ID="KGAS${GAL#KILOGAS}"
 
-    CMD="MPLBACKEND=Agg conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --kgas-id ${KGAS_ID} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
+    CMD="MPLBACKEND=Agg conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --kgas-id ${KGAS_ID} --pipeline-settings ${PIPELINE_SETTINGS} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
 
     JOB_NAME="$(echo "${GAL}" | tr '[:upper:]' '[:lower:]')-gnfw"
 
     echo "----------------------------------------------"
     echo "${GAL}  (kgas-id=${KGAS_ID})"
-    echo "  data   : ${DATA}"
-    echo "  outdir : ${OUTDIR}"
+    echo "  data     : ${DATA}"
+    echo "  outdir   : ${OUTDIR}"
+    echo "  settings : ${PIPELINE_SETTINGS}"
     echo "  job    : ${JOB_NAME}"
 
     if [[ "${DRY_RUN}" == true ]]; then

@@ -6,6 +6,10 @@ Fits a generalized NFW (gNFW) velocity profile to KILOGAS visibilities
 using UVfit + KinMS. The inner slope gamma is a free MCMC parameter:
 gamma = 0 -> flat core, gamma = 1 -> classical NFW cusp.
 
+The MCMC ``flux`` parameter is **integrated line flux** (Jy·km/s); uvfit passes it
+to KinMS ``intFlux`` unchanged. KinMS ``normalise_cube`` applies the ``dv`` factor
+internally — do not pre-divide catalog ``flux_int_jy_kms`` by channel width here.
+
 Usage:
     # Fixed-step run (galaxy parameters from kgas_config)
     python run_kgas_full.py --data KILOGAS007.npz --outdir results/KILOGAS007 --kgas-id KGAS007
@@ -77,17 +81,6 @@ parser.add_argument(
     help="Skip saving preflight PNGs (preflight_uv_hist2d.png, preflight_snr_profile.png)",
 )
 parser.add_argument(
-    "--spectral-bin-factor",
-    type=int,
-    default=1,
-    metavar="N",
-    help=(
-        "Average N adjacent spectral channels with weights before fitting "
-        "(SNR ~ sqrt(N)). Truncates trailing channels if n_chan %% N != 0. "
-        "Use 1 for no binning."
-    ),
-)
-parser.add_argument(
     "--kgas-id",
     default=None,
     metavar="ID",
@@ -96,32 +89,45 @@ parser.add_argument(
         "vmax defaults from that band vs vsys. Omit --vsys/--vmax/--r-scale to use catalog/band defaults."
     ),
 )
+parser.add_argument(
+    "--pipeline-settings",
+    default=None,
+    metavar="PATH",
+    help=(
+        "YAML file with aggregation options (default: uvkin_settings.yaml next to this script)"
+    ),
+)
 
 args = parser.parse_args()
 
-from kgas_config import (
-    SHARED,
-    format_config_log,
-    get_galaxy_config,
-    vmax_circ_from_obs_band,
-)
+from kgas_config import format_config_log, vmax_circ_from_obs_band
+from pipeline_config import load_pipeline_settings
 
-CELLSIZE = SHARED.cellsize_arcsec
-NX = SHARED.nx
-NY = SHARED.ny
-VEL_BUFFER = SHARED.vel_buffer_kms
-F_REST = SHARED.f_rest_hz
-C_KMS = SHARED.c_kms
+PIPE = load_pipeline_settings(
+    Path(args.pipeline_settings) if args.pipeline_settings else None
+)
+AGGREGATION = PIPE.aggregation
+
+CELLSIZE = PIPE.shared.cellsize_arcsec
+NX = PIPE.shared.nx
+NY = PIPE.shared.ny
+VEL_BUFFER = PIPE.shared.vel_buffer_kms
+F_REST = PIPE.shared.f_rest_hz
+C_KMS = PIPE.shared.c_kms
 
 if args.kgas_id is not None:
-    _cfg = get_galaxy_config(args.kgas_id)
+    if args.kgas_id not in PIPE.galaxies:
+        raise SystemExit(
+            f"Unknown --kgas-id {args.kgas_id!r}; valid: {sorted(PIPE.galaxies)}"
+        )
+    _cfg = PIPE.galaxies[args.kgas_id]
     PA_INIT = _cfg.pa_init
     INC_INIT = _cfg.inc_init
     VSYS = args.vsys if args.vsys is not None else _cfg.vsys
     VMAX = (
         args.vmax
         if args.vmax is not None
-        else vmax_circ_from_obs_band(_cfg.obs_freq_range_ghz, VSYS)
+        else vmax_circ_from_obs_band(_cfg.obs_freq_range_ghz, VSYS, shared=PIPE.shared)
     )
     R_SCALE = args.r_scale if args.r_scale is not None else _cfg.r_scale
 else:
@@ -160,7 +166,16 @@ log = logging.getLogger(__name__)
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from empirical_bounds import BoundedGNFWKinMSModel, get_empirical_bounds
+from empirical_bounds import BoundedGNFWKinMSModel
+from fit_bounds import get_empirical_bounds
+from uv_aggregate import (
+    apply_phase_center_shift,
+    auto_centroid_visibilities,
+    average_time_steps,
+    bin_uv_plane,
+    cast_uv_arrays,
+    extract_time_and_baseline,
+)
 from uvfit import UVDataset, Fitter
 
 
@@ -227,6 +242,37 @@ def bin_channels(vis, weights, vel, freqs, bin_factor):
     return vis_b, weights_b, vel_b, freqs_b, n_drop
 
 
+def compute_line_channel_mask(
+    vel_trim: np.ndarray,
+    *,
+    cfg,
+    vsys: float,
+    line_width_kms: float,
+    v_lo_band: float | None,
+    v_hi_band: float | None,
+) -> np.ndarray:
+    """
+    Boolean mask over spectral channels: True = line (diagnostics / centroid objective).
+
+    Matches pre-fit diagnostic logic: catalog obs band in velocity, else VSYS ± half
+    line width, with 80% trim-span fallback if line or off-line is empty.
+    """
+    if cfg is not None:
+        assert v_lo_band is not None and v_hi_band is not None
+        line_chan = (vel_trim >= v_lo_band) & (vel_trim <= v_hi_band)
+    else:
+        _hw = 0.5 * line_width_kms
+        line_chan = (vel_trim >= vsys - _hw) & (vel_trim <= vsys + _hw)
+    n_line = int(line_chan.sum())
+    n_off = int(np.sum(~line_chan))
+    if n_line == 0 or n_off == 0:
+        v0, v1 = float(vel_trim.min()), float(vel_trim.max())
+        span = v1 - v0
+        mid = 0.5 * (v0 + v1)
+        line_chan = (vel_trim >= mid - 0.4 * span) & (vel_trim <= mid + 0.4 * span)
+    return line_chan
+
+
 def write_bestfit_cube_fits(
     path,
     cube_vyx,
@@ -284,7 +330,7 @@ def write_bestfit_cube_fits(
 # Source parameters (grid + cosmology: kgas_config.SHARED; galaxy block via --kgas-id)
 # ---------------------------------------------------------------------------
 log.info("kgas_config reference:")
-for _line in format_config_log(args.kgas_id).splitlines():
+for _line in format_config_log(args.kgas_id, pipeline=PIPE).splitlines():
     log.info("  %s", _line)
 if args.kgas_id is not None:
     log.info(
@@ -301,20 +347,27 @@ log.info(
 # ---------------------------------------------------------------------------
 log.info("Loading data from %s", args.data)
 log.info(
-    "Precision: %s  |  Processes: %d  |  Converge: %s  |  Spectral bin: %d",
+    "Precision: %s  |  Processes: %d  |  Converge: %s  |  Spectral bin: %d (from yaml)",
     args.precision,
     args.n_processes,
     args.converge,
-    args.spectral_bin_factor,
+    AGGREGATION.spectral_bin_factor,
 )
 log.info("Vmax: %.1f km/s  |  r_scale: %.1f arcsec", VMAX, R_SCALE)
 t0 = time.time()
 d = np.load(args.data)
 u_all, v_all = d["u"], d["v"]
 freqs_all = d["freqs"]
+vis_all = d["vis"]
+weights_all = d["weights"]
+time_arr, baseline_arr = extract_time_and_baseline(d)
 log.info(
     "Loaded %d baselines x %d channels in %.1fs",
     u_all.shape[0], freqs_all.shape[0], time.time() - t0,
+)
+
+u_all, v_all, vis_all, weights_all = cast_uv_arrays(
+    u_all, v_all, vis_all, weights_all, args.precision,
 )
 
 vel_all = C_KMS * (1.0 - freqs_all / F_REST)
@@ -329,27 +382,85 @@ if _cfg is not None:
     v_lo = v_lo_band - VEL_BUFFER
     v_hi = v_hi_band + VEL_BUFFER
 else:
+    v_lo_band = None
+    v_hi_band = None
     v_lo = VSYS - VMAX - VEL_BUFFER
     v_hi = VSYS + VMAX + VEL_BUFFER
 chan_mask = (vel_all >= v_lo) & (vel_all <= v_hi)
 
+# ---------------------------------------------------------------------------
+# Visibility aggregation (time average → UV grid; spectral trim/bin after).
+# Phase centering: mandatory auto-centroid MCMC after UVDataset build.
+# ---------------------------------------------------------------------------
+log.info(
+    "Aggregation flags (from %s): time=%s  uv_bin=%s",
+    args.pipeline_settings or "uvkin_settings.yaml",
+    AGGREGATION.apply_time_averaging,
+    AGGREGATION.apply_uv_binning,
+)
+
+if AGGREGATION.apply_time_averaging:
+    if time_arr is None or baseline_arr is None:
+        log.warning(
+            "Time averaging enabled (%.1f s) but .npz has no usable time/baseline "
+            "keys (tried time/TIME/mjd/...; baseline/ant1+ant2/...); skipping.",
+            AGGREGATION.time_bin_s,
+        )
+    else:
+        _nrows_t0 = int(u_all.shape[0])
+        u_all, v_all, vis_all, weights_all = average_time_steps(
+            u_all,
+            v_all,
+            vis_all,
+            weights_all,
+            time_arr,
+            AGGREGATION.time_bin_s,
+            baseline_arr,
+        )
+        log.info(
+            "Time averaging (%.1f s bins): %d → %d rows",
+            AGGREGATION.time_bin_s,
+            _nrows_t0,
+            u_all.shape[0],
+        )
+
+if AGGREGATION.apply_uv_binning:
+    _ref_nu = float(np.median(freqs_all))
+    _nrows_uv0 = int(u_all.shape[0])
+    u_all, v_all, vis_all, weights_all = bin_uv_plane(
+        u_all,
+        v_all,
+        vis_all,
+        weights_all,
+        AGGREGATION.uv_bin_size_m,
+        _ref_nu,
+    )
+    log.info(
+        "UV binning (%.2f m cells, median ν = %.4f GHz): %d → %d rows",
+        AGGREGATION.uv_bin_size_m,
+        _ref_nu / 1e9,
+        _nrows_uv0,
+        u_all.shape[0],
+    )
+
 freqs_trim = freqs_all[chan_mask]
-vis_trim = d["vis"][:, chan_mask]
-weights_trim = d["weights"][:, chan_mask]
+vis_trim = vis_all[:, chan_mask]
+weights_trim = weights_all[:, chan_mask]
 vel_trim = vel_all[chan_mask]
 
-del d, freqs_all, vel_all
+del d, freqs_all, vel_all, vis_all, weights_all
 gc.collect()
 
 n_chan_pre_bin = int(vis_trim.shape[1])
-if args.spectral_bin_factor > 1:
+_spectral_bin = AGGREGATION.spectral_bin_factor
+if _spectral_bin > 1:
     try:
         vis_trim, weights_trim, vel_trim, freqs_trim, n_drop = bin_channels(
             vis_trim,
             weights_trim,
             vel_trim,
             freqs_trim,
-            args.spectral_bin_factor,
+            _spectral_bin,
         )
     except ValueError as exc:
         log.error("Spectral binning failed: %s", exc)
@@ -358,7 +469,7 @@ if args.spectral_bin_factor > 1:
         log.warning(
             "Spectral bin factor %d: dropped %d trailing channels "
             "(%d -> %d)",
-            args.spectral_bin_factor,
+            _spectral_bin,
             n_drop,
             n_chan_pre_bin,
             vis_trim.shape[1],
@@ -366,37 +477,53 @@ if args.spectral_bin_factor > 1:
     log.info(
         "Spectral bin factor %d: %d channels -> %d binned channels "
         "(expect SNR ~ sqrt(%d) per channel)",
-        args.spectral_bin_factor,
+        _spectral_bin,
         n_chan_pre_bin,
         vis_trim.shape[1],
-        args.spectral_bin_factor,
+        _spectral_bin,
     )
 
-dv_kms = float(np.median(np.abs(np.diff(vel_trim))))
+_dv_steps = np.abs(np.diff(vel_trim))
+if _dv_steps.size > 0:
+    current_dv_kms = float(np.median(_dv_steps))
+else:
+    current_dv_kms = 1.0
+    log.warning(
+        "Single spectral channel after trim/bin — using dv=1.0 km/s for KinMS spectral axis only"
+    )
 n_chan_trim = int(vis_trim.shape[1])
 
 log.info(
-    "Trimmed to %d channels (%.0f – %.0f km/s), dv=%.3f km/s",
-    n_chan_trim, vel_trim.min(), vel_trim.max(), dv_kms,
+    "Trimmed to %d channels (%.0f – %.0f km/s), median dv=%.3f km/s (binned grid)",
+    n_chan_trim, vel_trim.min(), vel_trim.max(), current_dv_kms,
 )
 
 if _cfg is not None:
-    flux_int = _cfg.flux_int_jy_kms / dv_kms
-    if abs(dv_kms - _cfg.channel_width_kms) > 0.01:
+    mcmc_flux_jy_kms = float(_cfg.flux_int_jy_kms)
+    log.info(
+        "MCMC Flux parameter standardized to Integrated Jy·km/s. Initial seed: %s.",
+        mcmc_flux_jy_kms,
+    )
+    if abs(current_dv_kms - _cfg.channel_width_kms) > 0.01:
         log.warning(
-            "Median dv from file (%.6f km/s) != kgas_config channel_width_kms (%.6f); "
-            "flux_int guess uses file dv.",
-            dv_kms,
+            "Median dv on fit grid (%.6f km/s) != catalog channel_width_kms (%.6f); "
+            "KinMS channel_width_kms uses binned grid; catalog width is metadata only.",
+            current_dv_kms,
             _cfg.channel_width_kms,
         )
 else:
-    flux_int = 1.0
+    mcmc_flux_jy_kms = 1.0
+    log.info(
+        "MCMC Flux parameter standardized to Integrated Jy·km/s. Initial seed: %s (no --kgas-id).",
+        mcmc_flux_jy_kms,
+    )
 
 empirical_bounds = get_empirical_bounds(
     vsys_int=0.0,
-    flux_int=flux_int,
+    flux_int=mcmc_flux_jy_kms,
     inc_int=INC_INIT,
     pa_int=PA_INIT,
+    mcmc_bounds=PIPE.mcmc_bounds,
 )
 
 uvdata = UVDataset(
@@ -414,6 +541,73 @@ log.info(
     "UVDataset RAM: vis %.1f MB (%s)  weights %.1f MB  u+v %.1f MB  total %.1f MB",
     vis_mb, uvdata.vis_data.dtype, wgt_mb, uv_mb, vis_mb + wgt_mb + uv_mb,
 )
+
+# ---------------------------------------------------------------------------
+# Mandatory phase auto-centroid (emcee) — coherent vector sum on line channels
+# ---------------------------------------------------------------------------
+line_chan = compute_line_channel_mask(
+    vel_trim,
+    cfg=_cfg,
+    vsys=VSYS,
+    line_width_kms=LINE_WIDTH_KMS,
+    v_lo_band=v_lo_band if _cfg is not None else None,
+    v_hi_band=v_hi_band if _cfg is not None else None,
+)
+if _cfg is not None:
+    _line_hw = 0.5 * (v_hi_band - v_lo_band)
+else:
+    _line_hw = LINE_WIDTH_KMS * 0.5
+offline_chan = ~line_chan
+n_line = int(line_chan.sum())
+n_off = int(offline_chan.sum())
+
+_centroid_seed = (
+    _cfg.phase_centroid_seed_arcsec
+    if _cfg is not None and _cfg.phase_centroid_seed_arcsec is not None
+    else AGGREGATION.phase_centroid_seed_arcsec
+)
+log.info("=" * 60)
+log.info("AUTO PHASE CENTROID (emcee, coherent line amplitude)")
+log.info(
+    "Dataset rows=%d  line ch=%d / %d  seed (dx,dy)=(%.5f, %.5f) arcsec",
+    int(uvdata.u.shape[0]),
+    n_line,
+    int(vel_trim.size),
+    _centroid_seed[0],
+    _centroid_seed[1],
+)
+_centroid_res = auto_centroid_visibilities(
+    uvdata,
+    line_chan,
+    phase_guess_arcsec=_centroid_seed,
+)
+log.info(
+    "Best-fit phase center: dx = %.5f arcsec  dy = %.5f arcsec",
+    _centroid_res["dx_arcsec"],
+    _centroid_res["dy_arcsec"],
+)
+log.info(
+    "Coherent amplitude total_S: (0,0) = %.6g  best = %.6g  improvement ×%.4f",
+    _centroid_res["total_s_at_origin"],
+    _centroid_res["total_s_best"],
+    _centroid_res["improvement_factor"],
+)
+if _centroid_res["offset_norm_arcsec"] > 1.0:
+    log.warning(
+        "Phase-centroid offset ||(dx,dy)|| = %.3f arcsec > 1.0 arcsec — galaxy may be "
+        "significantly off-center; inner slope (gamma) may be less reliable.",
+        _centroid_res["offset_norm_arcsec"],
+    )
+_centroid_vis = apply_phase_center_shift(
+    uvdata.u,
+    uvdata.v,
+    uvdata.vis_data,
+    _centroid_res["dx_arcsec"],
+    _centroid_res["dy_arcsec"],
+)
+np.copyto(uvdata.vis_data, _centroid_vis)
+log.info("Applied best phase shift to visibilities for pre-flight diagnostics and main fit.")
+log.info("=" * 60)
 
 # ---------------------------------------------------------------------------
 # Pre-fit diagnostics
@@ -434,34 +628,11 @@ elif args.line_width_kms is None:
         LINE_WIDTH_KMS,
     )
 
-# Channel masks: with --kgas-id, line = obs frequency band in velocity; else
-# VSYS ± half-width. Off-line = rest of trimmed cube.
+# line_chan / offline_chan / n_line / n_off already set (post phase-centroid vis)
 good = uvdata.weights > 0
 amp_abs = np.abs(uvdata.vis_data)
 snr2 = np.where(good, (amp_abs ** 2) * uvdata.weights, 0.0)
 mean_amp_chan = np.mean(amp_abs, axis=0)
-if _cfg is not None:
-    line_chan = (vel_trim >= v_lo_band) & (vel_trim <= v_hi_band)
-    offline_chan = (vel_trim < v_lo_band) | (vel_trim > v_hi_band)
-    _line_hw = 0.5 * (v_hi_band - v_lo_band)
-else:
-    _line_hw = LINE_WIDTH_KMS * 0.5
-    line_chan = (vel_trim >= VSYS - _line_hw) & (vel_trim <= VSYS + _line_hw)
-    offline_chan = (vel_trim < VSYS - _line_hw) | (vel_trim > VSYS + _line_hw)
-n_line = int(line_chan.sum())
-n_off = int(offline_chan.sum())
-if n_line == 0 or n_off == 0:
-    log.warning(
-        "Line/off-line mask empty (trim window vs line width); "
-        "widening line mask to 80%% of trim span for diagnostics only",
-    )
-    v0, v1 = float(vel_trim.min()), float(vel_trim.max())
-    span = v1 - v0
-    mid = 0.5 * (v0 + v1)
-    line_chan = (vel_trim >= mid - 0.4 * span) & (vel_trim <= mid + 0.4 * span)
-    offline_chan = ~line_chan
-    n_line = int(line_chan.sum())
-    n_off = int(offline_chan.sum())
 if _cfg is not None:
     log.info(
         "Line mask (diagnostics): %.1f km/s ≤ v ≤ %.1f km/s "
@@ -649,7 +820,7 @@ model = BoundedGNFWKinMSModel(
     ys=NY,
     vs=n_chan_trim,
     cell_size_arcsec=CELLSIZE,
-    channel_width_kms=dv_kms,
+    channel_width_kms=current_dv_kms,
     sbprof=sbprof,
     sbrad=radius,
     precision=args.precision,
@@ -659,7 +830,7 @@ fitter = Fitter(uvdata=uvdata, forward_model=model)
 init_params = {
     "inc": INC_INIT,
     "pa": PA_INIT,
-    "flux": flux_int,
+    "flux": mcmc_flux_jy_kms,
     "vsys": 0.0,
     "gas_sigma": 10.0,
     "gamma": 0.5,
@@ -720,7 +891,19 @@ save_dict = dict(
     log_prob=result_mcmc.log_prob,
     vmax=VMAX,
     r_scale=R_SCALE,
-    spectral_bin_factor=args.spectral_bin_factor,
+    spectral_bin_factor=AGGREGATION.spectral_bin_factor,
+    aggregation_default_phase_centroid_seed_arcsec=np.array(
+        AGGREGATION.phase_centroid_seed_arcsec
+    ),
+    aggregation_uv_bin_size_m=AGGREGATION.uv_bin_size_m,
+    aggregation_time_bin_s=AGGREGATION.time_bin_s,
+    aggregation_apply_uv_binning=AGGREGATION.apply_uv_binning,
+    aggregation_apply_time_averaging=AGGREGATION.apply_time_averaging,
+    phase_centroid_dx_arcsec=_centroid_res["dx_arcsec"],
+    phase_centroid_dy_arcsec=_centroid_res["dy_arcsec"],
+    phase_centroid_improvement=_centroid_res["improvement_factor"],
+    phase_centroid_total_s_origin=_centroid_res["total_s_at_origin"],
+    phase_centroid_total_s_best=_centroid_res["total_s_best"],
 )
 if result_mcmc.autocorr_time is not None:
     save_dict["autocorr_time"] = result_mcmc.autocorr_time

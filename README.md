@@ -45,7 +45,6 @@ python run_kgas_full.py \
   --outdir ./results/KILOGAS007 \
   --kgas-id KGAS007 \
   --precision single \
-  --spectral-bin-factor 4 \
   --n-processes 8
 
 # Tau-based convergence (recommended for production)
@@ -54,10 +53,10 @@ python run_kgas_full.py \
   --outdir ./results/KILOGAS007 \
   --kgas-id KGAS007 \
   --precision single \
-  --spectral-bin-factor 4 \
   --n-processes 8 \
   --converge --check-interval 500 --max-steps 10000
 
+# Spectral channel averaging: set aggregation.spectral_bin_factor in uvkin_settings.yaml (or --pipeline-settings).
 # Optional overrides: --vsys, --vmax, --r-scale (defaults are catalog values with --kgas-id)
 # Optional line mask width (km/s); default is 2×vmax when not using obs-band masks
 python run_kgas_full.py --data ... --outdir ... --kgas-id KGAS007 --line-width-kms 400
@@ -71,7 +70,7 @@ bash submit_kgas.sh --dry  # preview without submitting
 ```
 
 Edit `submit_kgas.sh` to set your container image, CANFAR project paths,
-and the list of `KILOGAS*` IDs to process (physical parameters come from `kgas_config`).
+and the list of `KILOGAS*` IDs to process (catalog and aggregation, including spectral binning, come from `uvkin_settings.yaml`).
 
 ### View results
 

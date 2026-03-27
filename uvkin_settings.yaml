@@ -1,0 +1,69 @@
+# uvkin pipeline settings — Optimized for KILOGAS DR1 (2026-03-27)
+# ---------------------------------------------------------------------------
+# Shared grid and CO J=2–1 rest frequency
+# ---------------------------------------------------------------------------
+shared:
+  default_channel_width_kms: 1.2699254451290471
+  cellsize_arcsec: 0.1   # Gold standard for 0.32 kpc resolution
+  nx: 256
+  ny: 256
+  vel_buffer_kms: 100.0  # Vital for noise-floor (diagnostic) baseline
+  f_rest_hz: 230538000000.0
+  c_kms: 299792.458
+
+# ---------------------------------------------------------------------------
+# Galaxy catalog
+# Seeds: PA points to redshifted side (CW from North, 90=Right/West)
+# ---------------------------------------------------------------------------
+galaxies:
+  KGAS007:
+    kilogas_archive_id: KILOGAS007
+    data_path_default: /Users/thbrown/kilogas/DR1/visibilities/KILOGAS007.npz
+    vsys: 13547.0         # Updated to Kinematic MAP center
+    r_scale: 3.0
+    pa_init: 241.0        # NSA verified seed
+    inc_init: 28.9
+    obs_freq_range_ghz: [219.999, 220.205]
+    flux_int_jy_kms: 24.132
+    phase_centroid_seed_arcsec: [-0.087, 0.187] # Updated to best-fit centroid
+
+  KGAS066:
+    kilogas_archive_id: KILOGAS066
+    data_path_default: /Users/thbrown/kilogas/DR1/visibilities/KILOGAS066.npz
+    vsys: 8033.4          # Updated to Kinematic MAP center
+    r_scale: 7.0
+    pa_init: 109.0        # NSA verified seed (Bottom-Right/Red side)
+    inc_init: 43.8
+    obs_freq_range_ghz: [224.148, 224.506]
+    flux_int_jy_kms: 102.482
+    phase_centroid_seed_arcsec: [0.789, 1.415]  # Updated to best-fit centroid
+
+# ---------------------------------------------------------------------------
+# Visibility aggregation
+# ---------------------------------------------------------------------------
+aggregation:
+  # Reset to origin for default; specific galaxies use centroids above
+  default_phase_centroid_seed_arcsec: [0.0, 0.0] 
+  
+  uv_bin_size_m: 10.0
+  time_bin_s: 30.0
+  apply_uv_binning: true
+  apply_time_averaging: true
+  
+  # Boost SNR by sqrt(4) = 2x per channel
+  spectral_bin_factor: 4 
+
+# ---------------------------------------------------------------------------
+# emcee / uvfit priors
+# ---------------------------------------------------------------------------
+mcmc_bounds:
+  vsys_offset_kms: [-50.0, 50.0]
+  gas_sigma: [3.0, 50.0]   # Allow room for turbulent/noisy disks
+  
+  # Integrated flux S_int (Jy·km/s): MCMC flux box is [low×S_int, high×S_int]
+  flux_multipliers: [0.2, 5.0]
+  gamma: [0.0, 2.0]
+  
+  # Widened half-widths to prevent "boundary hugging"
+  inc_half_width_deg: 30.0
+  pa_half_width_deg: 50.0   # Allow the gas to settle ±50 deg from stellar PA
