@@ -20,7 +20,7 @@ from config_schema import (
     SharedConfig,
 )
 
-_DEFAULT_YAML = Path(__file__).resolve().parent / "uvkin_settings.yaml"
+_DEFAULT_YAML = Path(__file__).resolve().parent.parent / "config" / "uvkin_settings.yaml"
 
 
 def _as_tuple2_arcsec(value: Any, *, key: str) -> Tuple[float, float]:
@@ -38,6 +38,10 @@ def _as_tuple2_ghz(value: Any, *, key: str) -> Tuple[float, float]:
 
 
 def _parse_shared(m: Mapping[str, Any]) -> SharedConfig:
+    wsf = m.get("weight_scale_factor", 0.5)
+    wsf = float(wsf)
+    if wsf <= 0.0:
+        raise ValueError(f"shared.weight_scale_factor must be positive; got {wsf}")
     return SharedConfig(
         default_channel_width_kms=float(m["default_channel_width_kms"]),
         cellsize_arcsec=float(m["cellsize_arcsec"]),
@@ -46,6 +50,7 @@ def _parse_shared(m: Mapping[str, Any]) -> SharedConfig:
         vel_buffer_kms=float(m["vel_buffer_kms"]),
         f_rest_hz=float(m["f_rest_hz"]),
         c_kms=float(m["c_kms"]),
+        weight_scale_factor=wsf,
     )
 
 

@@ -54,6 +54,7 @@ class SharedConfig:
     f_rest_hz: float
     c_kms: float
     default_channel_width_kms: float
+    weight_scale_factor: float = 0.5  # Hanning smoothing correction (0.5 for ALMA)
 
 
 @dataclass(frozen=True)

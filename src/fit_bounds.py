@@ -22,6 +22,7 @@ def get_empirical_bounds(
     *,
     mcmc_bounds: McmcBoundsConfig | None = None,
     flux_bounds: tuple[float, float] | None = None,
+    gas_sigma_floor: float | None = None,
 ) -> dict[str, tuple[float, float]]:
     """
     Box priors around catalog / kinematic reference values.
@@ -43,6 +44,10 @@ def get_empirical_bounds(
         If set, ``(lo, hi)`` in **Jy·km/s** for ``flux``; ``flux_multipliers`` in
         YAML are ignored. Otherwise ``flux`` bounds are
         ``flux_multipliers[0] * flux_int`` … ``flux_multipliers[1] * flux_int``.
+    gas_sigma_floor
+        If set, the lower bound of ``gas_sigma`` is clamped to at least this
+        value (km/s).  Use ``current_dv_kms`` to prevent velocity aliasing
+        when KinMS channel sampling cannot resolve narrower dispersions.
     """
     if mcmc_bounds is None:
         from pipeline_config import load_pipeline_settings
@@ -58,6 +63,8 @@ def get_empirical_bounds(
     v_lo_off, v_hi_off = cfg.vsys_offset_kms
     b_vsys = (vsys_int + v_lo_off, vsys_int + v_hi_off)
     b_gas = cfg.gas_sigma
+    if gas_sigma_floor is not None and gas_sigma_floor > b_gas[0]:
+        b_gas = (float(gas_sigma_floor), b_gas[1])
     if flux_bounds is not None:
         lo_f, hi_f = float(flux_bounds[0]), float(flux_bounds[1])
         if lo_f <= 0.0 or hi_f <= 0.0 or lo_f >= hi_f:

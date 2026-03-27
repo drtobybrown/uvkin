@@ -10,6 +10,7 @@ shared:
   vel_buffer_kms: 100.0  # Vital for noise-floor (diagnostic) baseline
   f_rest_hz: 230538000000.0
   c_kms: 299792.458
+  weight_scale_factor: 0.5  # Hanning smoothing covariance correction; 1.0 = no correction
 
 # ---------------------------------------------------------------------------
 # Galaxy catalog

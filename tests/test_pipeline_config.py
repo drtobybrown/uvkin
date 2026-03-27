@@ -25,7 +25,7 @@ def test_load_full_settings():
 
 
 def test_load_explicit_path():
-    here = Path(__file__).resolve().parent / "uvkin_settings.yaml"
+    here = Path(__file__).resolve().parent.parent / "config" / "uvkin_settings.yaml"
     pipe = load_pipeline_settings(here)
     assert pipe.galaxies["KGAS066"].vsys == 8033.4
 

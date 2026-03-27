@@ -389,8 +389,14 @@ else:
 chan_mask = (vel_all >= v_lo) & (vel_all <= v_hi)
 
 # ---------------------------------------------------------------------------
-# Visibility aggregation (time average → UV grid; spectral trim/bin after).
-# Phase centering: mandatory auto-centroid MCMC after UVDataset build.
+# Visibility aggregation — CORRECT order of operations:
+#   1. Time average (optional, preserves phase on short baselines)
+#   2. Spectral trim (select velocity range of interest)
+#   3. Phase centroid — MUST happen before UV-binning to avoid
+#      destructive phase interference within UV bins for off-center sources
+#   4. Apply phase shift to unbinned visibilities
+#   5. UV-bin the phase-centered data (optional)
+#   6. Spectral bin (optional channel averaging)
 # ---------------------------------------------------------------------------
 log.info(
     "Aggregation flags (from %s): time=%s  uv_bin=%s",
@@ -399,20 +405,111 @@ log.info(
     AGGREGATION.apply_uv_binning,
 )
 
+# Step 2: Spectral trim (moved before Phase centroid so line_chan is available)
+freqs_trim = freqs_all[chan_mask]
+vis_trim = vis_all[:, chan_mask]
+weights_trim = weights_all[:, chan_mask]
+vel_trim = vel_all[chan_mask]
+
+del d, freqs_all, vel_all, vis_all, weights_all
+gc.collect()
+
+# Step 3 & 4: Phase centroid on unbinned (or time-averaged) visibilities,
+# then apply the phase shift BEFORE UV-binning.
+line_chan = compute_line_channel_mask(
+    vel_trim,
+    cfg=_cfg,
+    vsys=VSYS,
+    line_width_kms=LINE_WIDTH_KMS,
+    v_lo_band=v_lo_band if _cfg is not None else None,
+    v_hi_band=v_hi_band if _cfg is not None else None,
+)
+if _cfg is not None:
+    _line_hw = 0.5 * (v_hi_band - v_lo_band)
+else:
+    _line_hw = LINE_WIDTH_KMS * 0.5
+offline_chan = ~line_chan
+n_line = int(line_chan.sum())
+n_off = int(offline_chan.sum())
+
+_centroid_seed = (
+    _cfg.phase_centroid_seed_arcsec
+    if _cfg is not None and _cfg.phase_centroid_seed_arcsec is not None
+    else AGGREGATION.phase_centroid_seed_arcsec
+)
+
+# Build temporary UVDataset for centroid (pre-UV-binning data)
+_centroid_uvdata = UVDataset(
+    u=u_all, v=v_all,
+    vis_data=vis_trim, weights=weights_trim, freqs=freqs_trim,
+    precision=args.precision,
+)
+
+log.info("=" * 60)
+log.info("AUTO PHASE CENTROID (emcee, coherent line amplitude)")
+log.info(
+    "Dataset rows=%d  line ch=%d / %d  seed (dx,dy)=(%.5f, %.5f) arcsec",
+    int(_centroid_uvdata.u.shape[0]),
+    n_line,
+    int(vel_trim.size),
+    _centroid_seed[0],
+    _centroid_seed[1],
+)
+log.info(
+    "NOTE: Phase centroid runs BEFORE UV-binning to prevent phase smearing."
+)
+_centroid_res = auto_centroid_visibilities(
+    _centroid_uvdata,
+    line_chan,
+    phase_guess_arcsec=_centroid_seed,
+)
+log.info(
+    "Best-fit phase center: dx = %.5f arcsec  dy = %.5f arcsec",
+    _centroid_res["dx_arcsec"],
+    _centroid_res["dy_arcsec"],
+)
+log.info(
+    "Coherent amplitude total_S: (0,0) = %.6g  best = %.6g  improvement ×%.4f",
+    _centroid_res["total_s_at_origin"],
+    _centroid_res["total_s_best"],
+    _centroid_res["improvement_factor"],
+)
+if _centroid_res["offset_norm_arcsec"] > 1.0:
+    log.warning(
+        "Phase-centroid offset ||(dx,dy)|| = %.3f arcsec > 1.0 arcsec — galaxy may be "
+        "significantly off-center; inner slope (gamma) may be less reliable.",
+        _centroid_res["offset_norm_arcsec"],
+    )
+
+# Apply phase shift to unbinned trimmed visibilities
+_centroid_vis = apply_phase_center_shift(
+    u_all,
+    v_all,
+    vis_trim,
+    _centroid_res["dx_arcsec"],
+    _centroid_res["dy_arcsec"],
+)
+vis_trim = _centroid_vis
+del _centroid_uvdata, _centroid_vis
+gc.collect()
+log.info("Applied best phase shift to unbinned visibilities.")
+log.info("=" * 60)
+
+# Step 4.5: Time averaging (after phase centroid to avoid phase smearing)
 if AGGREGATION.apply_time_averaging:
     if time_arr is None or baseline_arr is None:
         log.warning(
             "Time averaging enabled (%.1f s) but .npz has no usable time/baseline "
-            "keys (tried time/TIME/mjd/...; baseline/ant1+ant2/...); skipping.",
+            "keys; skipping.",
             AGGREGATION.time_bin_s,
         )
     else:
         _nrows_t0 = int(u_all.shape[0])
-        u_all, v_all, vis_all, weights_all = average_time_steps(
+        u_all, v_all, vis_trim, weights_trim = average_time_steps(
             u_all,
             v_all,
-            vis_all,
-            weights_all,
+            vis_trim,
+            weights_trim,
             time_arr,
             AGGREGATION.time_bin_s,
             baseline_arr,
@@ -424,14 +521,15 @@ if AGGREGATION.apply_time_averaging:
             u_all.shape[0],
         )
 
+# Step 5: UV-binning on phase-centered data
 if AGGREGATION.apply_uv_binning:
-    _ref_nu = float(np.median(freqs_all))
+    _ref_nu = float(np.median(freqs_trim))
     _nrows_uv0 = int(u_all.shape[0])
-    u_all, v_all, vis_all, weights_all = bin_uv_plane(
+    u_all, v_all, vis_trim, weights_trim = bin_uv_plane(
         u_all,
         v_all,
-        vis_all,
-        weights_all,
+        vis_trim,
+        weights_trim,
         AGGREGATION.uv_bin_size_m,
         _ref_nu,
     )
@@ -443,14 +541,7 @@ if AGGREGATION.apply_uv_binning:
         u_all.shape[0],
     )
 
-freqs_trim = freqs_all[chan_mask]
-vis_trim = vis_all[:, chan_mask]
-weights_trim = weights_all[:, chan_mask]
-vel_trim = vel_all[chan_mask]
-
-del d, freqs_all, vel_all, vis_all, weights_all
-gc.collect()
-
+# Step 6: Spectral binning
 n_chan_pre_bin = int(vis_trim.shape[1])
 _spectral_bin = AGGREGATION.spectral_bin_factor
 if _spectral_bin > 1:
@@ -518,12 +609,20 @@ else:
         mcmc_flux_jy_kms,
     )
 
+# Dynamic gas_sigma floor: prevent velocity aliasing (Sub-Agent 4)
+_gas_sigma_floor = current_dv_kms
+log.info(
+    "Dynamic gas_sigma floor: %.3f km/s (= current_dv_kms; prevents velocity aliasing)",
+    _gas_sigma_floor,
+)
+
 empirical_bounds = get_empirical_bounds(
     vsys_int=0.0,
     flux_int=mcmc_flux_jy_kms,
     inc_int=INC_INIT,
     pa_int=PA_INIT,
     mcmc_bounds=PIPE.mcmc_bounds,
+    gas_sigma_floor=_gas_sigma_floor,
 )
 
 uvdata = UVDataset(
@@ -541,73 +640,6 @@ log.info(
     "UVDataset RAM: vis %.1f MB (%s)  weights %.1f MB  u+v %.1f MB  total %.1f MB",
     vis_mb, uvdata.vis_data.dtype, wgt_mb, uv_mb, vis_mb + wgt_mb + uv_mb,
 )
-
-# ---------------------------------------------------------------------------
-# Mandatory phase auto-centroid (emcee) — coherent vector sum on line channels
-# ---------------------------------------------------------------------------
-line_chan = compute_line_channel_mask(
-    vel_trim,
-    cfg=_cfg,
-    vsys=VSYS,
-    line_width_kms=LINE_WIDTH_KMS,
-    v_lo_band=v_lo_band if _cfg is not None else None,
-    v_hi_band=v_hi_band if _cfg is not None else None,
-)
-if _cfg is not None:
-    _line_hw = 0.5 * (v_hi_band - v_lo_band)
-else:
-    _line_hw = LINE_WIDTH_KMS * 0.5
-offline_chan = ~line_chan
-n_line = int(line_chan.sum())
-n_off = int(offline_chan.sum())
-
-_centroid_seed = (
-    _cfg.phase_centroid_seed_arcsec
-    if _cfg is not None and _cfg.phase_centroid_seed_arcsec is not None
-    else AGGREGATION.phase_centroid_seed_arcsec
-)
-log.info("=" * 60)
-log.info("AUTO PHASE CENTROID (emcee, coherent line amplitude)")
-log.info(
-    "Dataset rows=%d  line ch=%d / %d  seed (dx,dy)=(%.5f, %.5f) arcsec",
-    int(uvdata.u.shape[0]),
-    n_line,
-    int(vel_trim.size),
-    _centroid_seed[0],
-    _centroid_seed[1],
-)
-_centroid_res = auto_centroid_visibilities(
-    uvdata,
-    line_chan,
-    phase_guess_arcsec=_centroid_seed,
-)
-log.info(
-    "Best-fit phase center: dx = %.5f arcsec  dy = %.5f arcsec",
-    _centroid_res["dx_arcsec"],
-    _centroid_res["dy_arcsec"],
-)
-log.info(
-    "Coherent amplitude total_S: (0,0) = %.6g  best = %.6g  improvement ×%.4f",
-    _centroid_res["total_s_at_origin"],
-    _centroid_res["total_s_best"],
-    _centroid_res["improvement_factor"],
-)
-if _centroid_res["offset_norm_arcsec"] > 1.0:
-    log.warning(
-        "Phase-centroid offset ||(dx,dy)|| = %.3f arcsec > 1.0 arcsec — galaxy may be "
-        "significantly off-center; inner slope (gamma) may be less reliable.",
-        _centroid_res["offset_norm_arcsec"],
-    )
-_centroid_vis = apply_phase_center_shift(
-    uvdata.u,
-    uvdata.v,
-    uvdata.vis_data,
-    _centroid_res["dx_arcsec"],
-    _centroid_res["dy_arcsec"],
-)
-np.copyto(uvdata.vis_data, _centroid_vis)
-log.info("Applied best phase shift to visibilities for pre-flight diagnostics and main fit.")
-log.info("=" * 60)
 
 # ---------------------------------------------------------------------------
 # Pre-fit diagnostics
@@ -646,21 +678,28 @@ else:
         VSYS - _line_hw, VSYS + _line_hw, VSYS, LINE_WIDTH_KMS, n_line, n_off,
     )
 
-# A. Weighted sums: all-channel metric is dominated by noise statistics (~sqrt(N*pi/2)/chan)
-integrated_snr_all = float(np.sqrt(np.nansum(snr2)))
+# A. Weighted sums: Incoherent excess power and Coherent SNR
 snr2_per_chan = np.sum(snr2, axis=0)
 sum_snr2_line = float(np.sum(snr2_per_chan[line_chan]))
 median_off_per_chan = float(np.median(snr2_per_chan[offline_chan]))
 noise_expect_line = n_line * median_off_per_chan
 excess_power = sum_snr2_line / max(noise_expect_line, 1e-30)
-line_integrated_snr = float(np.sqrt(sum_snr2_line))
+
+# True Coherent SNR from the phase-shifted centroid:
+# total_s_best = sum_chan | sum_row V * w | which has a noise bias per channel
+line_w_per_chan = np.sum(uvdata.weights[:, line_chan], axis=0)
+expected_noise_s = float(np.sum(np.sqrt(np.pi / 2.0 * line_w_per_chan)))
+coherent_signal_excess = _centroid_res["total_s_best"] - expected_noise_s
+coherent_noise = float(np.sqrt((2.0 - np.pi / 2.0) * np.sum(line_w_per_chan)))
+coherent_snr = coherent_signal_excess / max(coherent_noise, 1e-30)
+
 log.info(
-    "All-channel sqrt(sum |V|^2 w) (misleadingly flat vs velocity): %.1f",
-    integrated_snr_all,
+    "Incoherent |V|^2 excess power vs off-line: %.2f (expected ~1.0 for noise)",
+    excess_power,
 )
 log.info(
-    "Line-channel sqrt(sum |V|^2 w): %.1f  |  excess vs off-line median: %.2f",
-    line_integrated_snr, excess_power,
+    "Coherent integrated SNR (phase-centered): %.1f",
+    coherent_snr,
 )
 if excess_power < 1.5:
     log.warning(
@@ -669,8 +708,8 @@ if excess_power < 1.5:
         "else line width = 2×Vmax by default) before trusting MCMC",
         excess_power,
     )
-if line_integrated_snr < 10.0:
-    log.warning("Line-mask integrated SNR < 10 — marginal detection in uv plane")
+if coherent_snr < 3.0:
+    log.warning("Coherent integrated SNR < 3.0 — marginal or no detection in uv plane")
 
 _mean_line = float(np.mean(mean_amp_chan[line_chan]))
 _mean_off = float(np.mean(mean_amp_chan[offline_chan]))
@@ -707,8 +746,15 @@ for i in range(N_BINS):
     if np.any(valid_mask):
         vis_valid = vis_flat[valid_mask]
         w_valid = w_flat[valid_mask]
-        weighted_complex_mean = np.sum(vis_valid * w_valid) / np.sum(w_valid)
-        amp_signal[i] = float(np.abs(weighted_complex_mean))
+        # Incoherent RMS visibility debiased from thermal noise:
+        # |V_obs|^2 = |V_true|^2 + |Noise|^2
+        v2_obs = np.abs(vis_valid)**2
+        v2_noise = 1.0 / np.maximum(w_valid, 1e-30)
+        v2_signal_est = v2_obs - v2_noise
+        
+        # Weighted mean of the signal power:
+        mean_v2_signal = np.sum(v2_signal_est * w_valid) / np.sum(w_valid)
+        amp_signal[i] = float(np.sqrt(max(mean_v2_signal, 0.0)))
         noise_floor[i] = 1.0 / np.sqrt(np.sum(w_valid))
 
 # C. Critical scale radius in UV (m) and high-UV SNR
@@ -759,7 +805,7 @@ if not args.no_preflight_plots:
     plt.close(fig1)
 
     fig2, ax2 = plt.subplots(figsize=(8, 5), facecolor="white")
-    ax2.step(uv_centers, amp_signal, where="mid", color="black", lw=2, label="Vector-averaged signal")
+    ax2.step(uv_centers, amp_signal, where="mid", color="black", lw=2, label="Debiased RMS amplitude")
     ax2.plot(uv_centers, noise_floor, color="gray", ls=":", label=r"$1\sigma$ noise floor")
     ax2.plot(uv_centers, 3 * noise_floor, color="red", ls="--", label=r"$3\sigma$ detection limit")
     ax2.axvline(q_crit_m, color="blue", ls="-", alpha=0.7, label=f"Core resolution (~{q_crit_m:.0f} m)")
@@ -825,7 +871,16 @@ model = BoundedGNFWKinMSModel(
     sbrad=radius,
     precision=args.precision,
 )
-fitter = Fitter(uvdata=uvdata, forward_model=model)
+_weight_scale = PIPE.shared.weight_scale_factor
+log.info(
+    "Weight scale factor (Hanning covariance correction): %.3f",
+    _weight_scale,
+)
+fitter = Fitter(
+    uvdata=uvdata,
+    forward_model=model,
+    weight_scale_factor=_weight_scale,
+)
 
 init_params = {
     "inc": INC_INIT,
