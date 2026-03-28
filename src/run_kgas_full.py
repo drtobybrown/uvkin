@@ -902,6 +902,17 @@ init_params = {
     "gamma": 0.5,
 }
 
+frozen_params = model.frozen_params
+if frozen_params:
+    log.info(
+        "Freezing parameters (MCMC dimensionality reduced from %d to %d): %s",
+        len(init_params),
+        len(init_params) - len(frozen_params),
+        list(frozen_params.keys()),
+    )
+    for k in frozen_params:
+        init_params.pop(k, None)
+
 n_data = 2 * uvdata.vis_data.size
 n_params = len(init_params)
 
@@ -949,6 +960,8 @@ if result_mcmc.autocorr_time is not None:
 save_dict = dict(
     params=np.array(list(result_mcmc.params.values())),
     param_names=np.array(list(result_mcmc.params.keys())),
+    frozen_params=np.array(list(frozen_params.values())),
+    frozen_param_names=np.array(list(frozen_params.keys())),
     chi2=result_mcmc.chi2,
     reduced_chi2=result_mcmc.reduced_chi2,
     n_data=n_data,

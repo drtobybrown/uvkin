@@ -80,7 +80,7 @@ def get_empirical_bounds(
     hw_i = cfg.inc_half_width_deg
     lo_i = max(0.0, inc_int - hw_i)
     hi_i = min(90.0, inc_int + hw_i)
-    if lo_i >= hi_i:
+    if lo_i >= hi_i and hw_i > 0.0:
         mid = max(0.0, min(90.0, 0.5 * (lo_i + hi_i)))
         lo_i = max(0.0, mid - 0.5)
         hi_i = min(90.0, mid + 0.5)
@@ -93,7 +93,7 @@ def get_empirical_bounds(
     hi_p = pa_c + hw_p
     lo_p = max(-180.0, min(180.0, lo_p))
     hi_p = max(-180.0, min(180.0, hi_p))
-    if lo_p >= hi_p:
+    if lo_p >= hi_p and hw_p > 0.0:
         mid = max(-180.0, min(180.0, 0.5 * (lo_p + hi_p)))
         lo_p = max(-180.0, mid - 0.5)
         hi_p = min(180.0, mid + 0.5)

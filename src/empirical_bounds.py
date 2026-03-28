@@ -36,7 +36,18 @@ class BoundedGNFWKinMSModel(gNFWKinMSModel):
                 f"empirical_bounds keys {sorted(got)} != param_names {sorted(expected)}"
             )
         self._empirical_bounds = empirical_bounds
+        self.frozen_params = {
+            k: v[0] for k, v in empirical_bounds.items() if v[0] == v[1]
+        }
 
     @property
     def bounds(self) -> dict[str, tuple[float, float]]:
-        return dict(self._empirical_bounds)
+        return {
+            k: v for k, v in self._empirical_bounds.items() if k not in self.frozen_params
+        }
+
+    def generate_cube(self, params: dict[str, float]) -> Any:
+        # Inject frozen parameters before KinMS computation
+        merged = dict(params)
+        merged.update(self.frozen_params)
+        return super().generate_cube(merged)

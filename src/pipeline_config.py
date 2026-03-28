@@ -87,8 +87,8 @@ def _parse_mcmc_bounds(m: Mapping[str, Any]) -> McmcBoundsConfig:
 
     inc_hw = float(m["inc_half_width_deg"])
     pa_hw = float(m["pa_half_width_deg"])
-    if inc_hw <= 0.0 or pa_hw <= 0.0:
-        raise ValueError("mcmc_bounds inc_half_width_deg and pa_half_width_deg must be > 0")
+    if inc_hw < 0.0 or pa_hw < 0.0:
+        raise ValueError("mcmc_bounds inc_half_width_deg and pa_half_width_deg must be >= 0")
 
     return McmcBoundsConfig(
         vsys_offset_kms=(vlo, vhi),
