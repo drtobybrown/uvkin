@@ -2,7 +2,7 @@
 # Submit gNFW kinematic fitting jobs on CANFAR.
 #
 # One headless batch job per galaxy in flexible mode
-# (elastic 1-8 cores, 4-32 GB).
+# (elastic up to 16 cores, 4-32 GB).
 #
 # Prerequisites:
 #   - canfar CLI installed and authenticated (canfar auth login)
@@ -31,7 +31,7 @@ IMAGE="images.canfar.net/skaha/astroml:latest"
 CONDA_ENV="uvkin"
 # Precision is now locked to single (float32 / complex64) inside
 # run_kgas_full.py per Plan Section D — no CLI knob.
-N_PROCESSES=8
+N_PROCESSES=16
 
 # CANFAR /arc layout (example for KILOGAS066):
 #   visibilities : ${ARC_BASE}/visibilities/KILOGAS066.npz
@@ -61,7 +61,7 @@ echo "=============================================="
 echo "Image     : ${IMAGE}"
 echo "Precision : single (locked in run_kgas_full.py)"
 echo "Processes : ${N_PROCESSES}"
-echo "Mode      : flexible (elastic 1-8 cores, 4-32 GB)"
+echo "Mode      : flexible (elastic up to 16 cores, 4-32 GB)"
 echo "Converge  : tau-based (check every ${CHECK_INTERVAL} steps, max ${MAX_STEPS})"
 echo ""
 
