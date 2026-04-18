@@ -9,11 +9,6 @@ from __future__ import annotations
 from config_schema import McmcBoundsConfig
 
 
-def _wrap_pa_deg(angle: float) -> float:
-    """Map *angle* to ``[-180, 180)`` degrees."""
-    return (angle + 180.0) % 360.0 - 180.0
-
-
 def get_empirical_bounds(
     vsys_int: float,
     flux_int: float,
@@ -93,16 +88,20 @@ def get_empirical_bounds(
         if lo_i >= hi_i:
             lo_i, hi_i = 0.0, min(90.0, max(1e-6, inc_int))
 
-    hw_p = cfg.pa_half_width_deg
-    pa_c = _wrap_pa_deg(pa_int)
-    lo_p = pa_c - hw_p
-    hi_p = pa_c + hw_p
-    lo_p = max(-180.0, min(180.0, lo_p))
-    hi_p = max(-180.0, min(180.0, hi_p))
-    if lo_p >= hi_p and hw_p > 0.0:
-        mid = max(-180.0, min(180.0, 0.5 * (lo_p + hi_p)))
-        lo_p = max(-180.0, mid - 0.5)
-        hi_p = min(180.0, mid + 0.5)
+    # PA: symmetric box on the *catalog seed degrees* (KinMS convention, often
+    # 0–360).  Do **not** clip each endpoint to ±180 independently — that
+    # truncates wrap-around intervals (e.g. 166.2° ± 50° must include >180°).
+    hw_p = float(cfg.pa_half_width_deg)
+    pa_seed = float(pa_int)
+    lo_p = pa_seed - hw_p
+    hi_p = pa_seed + hw_p
+    span = hi_p - lo_p
+    if span <= 0.0:
+        raise ValueError(f"pa half-width must be positive; got span={span}")
+    if span > 360.0:
+        mid = 0.5 * (lo_p + hi_p)
+        lo_p = mid - 180.0
+        hi_p = mid + 180.0
 
     dx_seed, dy_seed = float(phase_centroid_seed_arcsec[0]), float(phase_centroid_seed_arcsec[1])
     b_dx = (dx_seed - cfg.dx_half_width_arcsec, dx_seed + cfg.dx_half_width_arcsec)

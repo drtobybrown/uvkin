@@ -21,7 +21,10 @@ def test_load_full_settings():
     assert pipe.aggregation.time_bin_s == 30.0
     assert pipe.aggregation.spectral_bin_factor == 4
     assert pipe.mcmc_bounds.vsys_offset_kms == (-50.0, 50.0)
-    assert pipe.mcmc_bounds.inc_half_width_deg == 30.0
+    assert pipe.mcmc_bounds.inc_half_width_deg == 90.0
+    assert pipe.mcmc_bounds.flux_multipliers == (0.05, 10.0)
+    assert pipe.mcmc_bounds.gas_sigma == (3.0, 80.0)
+    assert pipe.mcmc_bounds.dx_half_width_arcsec == 5.0
 
 
 def test_load_explicit_path():

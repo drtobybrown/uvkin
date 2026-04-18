@@ -69,10 +69,34 @@ def test_inc_clamped():
     assert lo >= 0.0 and hi <= 90.0 and lo <= hi
 
 
-def test_pa_clip():
-    b = get_empirical_bounds(0.0, 1.0, 45.0, 170.0)
+def test_pa_no_truncation_past_180_deg():
+    """166.2° ± 50° must include angles > 180° (KinMS convention)."""
+    mb = McmcBoundsConfig(
+        vsys_offset_kms=(-50.0, 50.0),
+        gas_sigma=(3.0, 30.0),
+        flux_multipliers=(0.5, 2.0),
+        gamma=(0.0, 2.0),
+        inc_half_width_deg=30.0,
+        pa_half_width_deg=50.0,
+    )
+    b = get_empirical_bounds(0.0, 1.0, 45.0, 166.2, mcmc_bounds=mb)
+    assert b["pa"][0] == pytest.approx(116.2)
+    assert b["pa"][1] == pytest.approx(216.2)
+
+
+def test_pa_wide_span_clamped_to_360_deg_max():
+    mb = McmcBoundsConfig(
+        vsys_offset_kms=(-50.0, 50.0),
+        gas_sigma=(3.0, 30.0),
+        flux_multipliers=(0.5, 2.0),
+        gamma=(0.0, 2.0),
+        inc_half_width_deg=30.0,
+        pa_half_width_deg=250.0,
+    )
+    b = get_empirical_bounds(0.0, 1.0, 45.0, 90.0, mcmc_bounds=mb)
     lo, hi = b["pa"]
-    assert -180.0 <= lo <= 180.0 and -180.0 <= hi <= 180.0 and lo <= hi
+    assert hi - lo == pytest.approx(360.0)
+    assert lo == pytest.approx(-90.0) and hi == pytest.approx(270.0)
 
 
 def test_flux_bounds_override():
