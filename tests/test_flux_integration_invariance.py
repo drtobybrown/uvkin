@@ -35,6 +35,8 @@ def test_flux_integration_invariance():
         "gas_sigma": 10.0,
         "gamma": 1.0,
         "flux": s_int_target,
+        "dx": 0.0,
+        "dy": 0.0,
     }
 
     radius = np.arange(0.01, 40.0, 0.2)
@@ -46,6 +48,8 @@ def test_flux_integration_invariance():
         "vsys": (-200.0, 200.0),
         "gas_sigma": (1.0, 200.0),
         "gamma": (0.0, 2.0),
+        "dx": (-1.0, 1.0),
+        "dy": (-1.0, 1.0),
     }
     vmax = 200.0
     r_scale = 7.0

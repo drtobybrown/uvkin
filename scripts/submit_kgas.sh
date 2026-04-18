@@ -17,14 +17,15 @@ set -euo pipefail
 
 # ── Galaxy IDs (catalog = uvkin_settings.yaml → galaxies:; vmax from obs band vs vsys) ──
 GALAXY_CONFIGS=(
-    "KILOGAS007"
-    # "KILOGAS066"
+    # "KILOGAS007"
+    "KILOGAS066"
 )
 
 # ── Shared configuration ──
 IMAGE="images.canfar.net/skaha/astroml:latest"
 CONDA_ENV="uvkin"
-PRECISION="single"
+# Precision is now locked to single (float32 / complex64) inside
+# run_kgas_full.py per Plan Section D — no CLI knob.
 N_PROCESSES=8
 
 ARC_BASE="/arc/projects/KILOGAS/analysis/toby_sandbox"
@@ -48,7 +49,7 @@ echo "=============================================="
 echo "CANFAR batch submission — gNFW kinematic fitting"
 echo "=============================================="
 echo "Image     : ${IMAGE}"
-echo "Precision : ${PRECISION}"
+echo "Precision : single (locked in run_kgas_full.py)"
 echo "Processes : ${N_PROCESSES}"
 echo "Mode      : flexible (elastic 1-8 cores, 4-32 GB)"
 echo "Converge  : tau-based (check every ${CHECK_INTERVAL} steps, max ${MAX_STEPS})"
@@ -64,7 +65,7 @@ for GAL in "${GALAXY_CONFIGS[@]}"; do
     # KILOGAS007 -> KGAS007 (must match keys under galaxies: in uvkin_settings.yaml)
     KGAS_ID="KGAS${GAL#KILOGAS}"
 
-    CMD="MPLBACKEND=Agg conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --precision ${PRECISION} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --kgas-id ${KGAS_ID} --pipeline-settings ${PIPELINE_SETTINGS} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
+    CMD="MPLBACKEND=Agg conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --kgas-id ${KGAS_ID} --pipeline-settings ${PIPELINE_SETTINGS} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
 
     JOB_NAME="$(echo "${GAL}" | tr '[:upper:]' '[:lower:]')-gnfw"
 

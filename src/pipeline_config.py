@@ -90,6 +90,13 @@ def _parse_mcmc_bounds(m: Mapping[str, Any]) -> McmcBoundsConfig:
     if inc_hw < 0.0 or pa_hw < 0.0:
         raise ValueError("mcmc_bounds inc_half_width_deg and pa_half_width_deg must be >= 0")
 
+    dx_hw = float(m.get("dx_half_width_arcsec", 1.0))
+    dy_hw = float(m.get("dy_half_width_arcsec", 1.0))
+    if dx_hw <= 0.0 or dy_hw <= 0.0:
+        raise ValueError(
+            "mcmc_bounds.dx_half_width_arcsec/dy_half_width_arcsec must be > 0"
+        )
+
     return McmcBoundsConfig(
         vsys_offset_kms=(vlo, vhi),
         gas_sigma=(g_lo, g_hi),
@@ -97,6 +104,8 @@ def _parse_mcmc_bounds(m: Mapping[str, Any]) -> McmcBoundsConfig:
         gamma=(ga_lo, ga_hi),
         inc_half_width_deg=inc_hw,
         pa_half_width_deg=pa_hw,
+        dx_half_width_arcsec=dx_hw,
+        dy_half_width_arcsec=dy_hw,
     )
 
 
@@ -229,6 +238,8 @@ def format_mcmc_bounds_log(mb: McmcBoundsConfig) -> str:
             f"  gamma: [{ga[0]}, {ga[1]}]",
             f"  inc: inc_init ± {mb.inc_half_width_deg} deg (clamped to [0, 90])",
             f"  pa: pa_init ± {mb.pa_half_width_deg} deg (wrapped/clipped to [-180, 180])",
+            f"  dx: seed ± {mb.dx_half_width_arcsec} arcsec (MCMC parameter)",
+            f"  dy: seed ± {mb.dy_half_width_arcsec} arcsec (MCMC parameter)",
         ]
     )
 

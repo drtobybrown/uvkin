@@ -14,7 +14,10 @@ shared:
 
 # ---------------------------------------------------------------------------
 # Galaxy catalog
-# Seeds: PA points to redshifted side (CW from North, 90=Right/West)
+# Seeds: pa_init is the KinMS `posAng` of the REDSHIFTED side, measured CW
+# from North (0=N, 90=W, 180=S, 270=E). To convert a standard astronomical
+# major-axis PA (East-of-North) with red side at +180 from it, use
+#     pa_init = (360 - PA_astro_of_red_side) mod 360
 # ---------------------------------------------------------------------------
 galaxies:
   KGAS007:
@@ -22,7 +25,10 @@ galaxies:
     data_path_default: /Users/thbrown/kilogas/DR1/visibilities/KILOGAS007.npz
     vsys: 13547.0         # Updated to Kinematic MAP center
     r_scale: 3.0
-    pa_init: 241.0        # NSA verified seed
+    # NSA photometric major-axis PA = 147.4 deg (East-of-North). Red side is
+    # SSE, i.e. the 147.4 deg E-of-N end of the major axis. KinMS posAng is
+    # CW from North (= -astro_PA mod 360), so posAng = 360 - 147.4 = 212.6 deg.
+    pa_init: 212.6
     inc_init: 28.9
     obs_freq_range_ghz: [219.999, 220.205]
     flux_int_jy_kms: 24.132
@@ -33,7 +39,10 @@ galaxies:
     data_path_default: /Users/thbrown/kilogas/DR1/visibilities/KILOGAS066.npz
     vsys: 8033.4          # Updated to Kinematic MAP center
     r_scale: 7.0
-    pa_init: 109.0        # NSA verified seed (Bottom-Right/Red side)
+    # NSA photometric major-axis PA = 13.8 deg (East-of-North). Red side is SSW,
+    # i.e. the 193.8 deg E-of-N end of the major axis. KinMS posAng is CW from
+    # North (= -astro_PA mod 360), so posAng = 360 - 193.8 = 166.2 deg.
+    pa_init: 166.2
     inc_init: 43.8
     obs_freq_range_ghz: [224.148, 224.506]
     flux_int_jy_kms: 102.482
@@ -68,3 +77,9 @@ mcmc_bounds:
   # Widened half-widths to prevent "boundary hugging"
   inc_half_width_deg: 30.0
   pa_half_width_deg: 50.0   # Allow the gas to settle ±50 deg from stellar PA
+
+  # Phase-centre (dx, dy) MCMC box around the seed in aggregation /
+  # galaxies.phase_centroid_seed_arcsec. KinMSModel now fits these directly;
+  # the pre-fit auto-centroid step has been removed.
+  dx_half_width_arcsec: 1.0
+  dy_half_width_arcsec: 1.0

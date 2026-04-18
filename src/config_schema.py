@@ -87,6 +87,10 @@ class McmcBoundsConfig:
     gamma: Tuple[float, float]
     inc_half_width_deg: float
     pa_half_width_deg: float
+    # Half-width of the box prior on (dx, dy) in arcsec around the seed.
+    # The MCMC explores dx, dy in `[seed - hw, seed + hw]` for each axis.
+    dx_half_width_arcsec: float = 1.0
+    dy_half_width_arcsec: float = 1.0
 
 
 @dataclass(frozen=True)

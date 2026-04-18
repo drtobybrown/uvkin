@@ -22,5 +22,12 @@ dependencies:
     - corner
     - tqdm
     - pymakeplots
+    # The uvfit / ms2uvfit commits pinned below MUST expose the canonical
+    # metres + Hz schema (UVDataset u_m/v_m + per-channel ν in NUFFTEngine,
+    # UVFitData.save with u_m/v_m keys). Older commits are source-
+    # incompatible (load_uvfits will refuse legacy u,v-wavelengths .npz).
+    # Bump these pins to versioned tags once released upstream:
+    #   - uvfit @ git+https://github.com/drtobybrown/uvfit.git@vX.Y.Z
+    #   - ms2uvfit @ git+https://github.com/drtobybrown/ms2uvfit.git@vX.Y.Z
     - uvfit @ git+https://github.com/drtobybrown/uvfit.git
     - ms2uvfit @ git+https://github.com/drtobybrown/ms2uvfit.git

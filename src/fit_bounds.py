@@ -23,6 +23,7 @@ def get_empirical_bounds(
     mcmc_bounds: McmcBoundsConfig | None = None,
     flux_bounds: tuple[float, float] | None = None,
     gas_sigma_floor: float | None = None,
+    phase_centroid_seed_arcsec: tuple[float, float] = (0.0, 0.0),
 ) -> dict[str, tuple[float, float]]:
     """
     Box priors around catalog / kinematic reference values.
@@ -48,6 +49,11 @@ def get_empirical_bounds(
         If set, the lower bound of ``gas_sigma`` is clamped to at least this
         value (km/s).  Use ``current_dv_kms`` to prevent velocity aliasing
         when KinMS channel sampling cannot resolve narrower dispersions.
+    phase_centroid_seed_arcsec
+        ``(dx, dy)`` seed in arcsec; box prior is
+        ``[seed ± mcmc_bounds.dx_half_width_arcsec]`` per axis (KinMSModel now
+        carries ``dx``, ``dy`` as MCMC parameters instead of the removed
+        pre-fit coherent centroid).
     """
     if mcmc_bounds is None:
         from pipeline_config import load_pipeline_settings
@@ -98,6 +104,10 @@ def get_empirical_bounds(
         lo_p = max(-180.0, mid - 0.5)
         hi_p = min(180.0, mid + 0.5)
 
+    dx_seed, dy_seed = float(phase_centroid_seed_arcsec[0]), float(phase_centroid_seed_arcsec[1])
+    b_dx = (dx_seed - cfg.dx_half_width_arcsec, dx_seed + cfg.dx_half_width_arcsec)
+    b_dy = (dy_seed - cfg.dy_half_width_arcsec, dy_seed + cfg.dy_half_width_arcsec)
+
     return {
         "inc": (lo_i, hi_i),
         "pa": (lo_p, hi_p),
@@ -105,4 +115,6 @@ def get_empirical_bounds(
         "vsys": b_vsys,
         "gas_sigma": b_gas,
         "gamma": b_gamma,
+        "dx": b_dx,
+        "dy": b_dy,
     }
