@@ -7,7 +7,12 @@
 # Prerequisites:
 #   - canfar CLI installed and authenticated (canfar auth login)
 #   - Container image with uvfit, kinms, emcee installed
-#   - Data and script available on /arc/
+#   - Data and scripts available on /arc/ (see ARC_BASE below)
+#
+# Each job runs scripts/run_uvkin.sh: it copies the visibility .npz and
+# pipeline YAML to ${SCRATCH:-/scratch}, executes run_kgas_full.py with
+# --outdir on scratch, then rsyncs the entire output tree (logs, result.npz,
+# FITS, preflight PNGs) back to RESULTS_BASE regardless of exit code.
 #
 # Usage:
 #   bash submit_kgas.sh          # submit all galaxies
@@ -33,6 +38,7 @@ VIS_DIR="${ARC_BASE}/visibilities"
 RESULTS_BASE="${ARC_BASE}/results"
 UVKIN_DIR="${ARC_BASE}/uvkin"
 SCRIPT="${UVKIN_DIR}/run_kgas_full.py"
+RUN_UVKIN="${UVKIN_DIR}/scripts/run_uvkin.sh"
 # Shared / galaxies / aggregation (optional override; default is this file beside run_kgas_full.py)
 PIPELINE_SETTINGS="${UVKIN_DIR}/uvkin_settings.yaml"
 
@@ -65,7 +71,7 @@ for GAL in "${GALAXY_CONFIGS[@]}"; do
     # KILOGAS007 -> KGAS007 (must match keys under galaxies: in uvkin_settings.yaml)
     KGAS_ID="KGAS${GAL#KILOGAS}"
 
-    CMD="MPLBACKEND=Agg conda run --no-capture-output -n ${CONDA_ENV} python ${SCRIPT} --data ${DATA} --outdir ${OUTDIR} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --kgas-id ${KGAS_ID} --pipeline-settings ${PIPELINE_SETTINGS} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
+    CMD="bash ${RUN_UVKIN} --data ${DATA} --results-dest ${OUTDIR} --kgas-id ${KGAS_ID} --pipeline-settings ${PIPELINE_SETTINGS} --script ${SCRIPT} --conda-env ${CONDA_ENV} --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --converge --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS}"
 
     JOB_NAME="$(echo "${GAL}" | tr '[:upper:]' '[:lower:]')-gnfw"
 
@@ -73,8 +79,9 @@ for GAL in "${GALAXY_CONFIGS[@]}"; do
     echo "${GAL}  (kgas-id=${KGAS_ID})"
     echo "  data     : ${DATA}"
     echo "  outdir   : ${OUTDIR}"
+    echo "  wrapper  : ${RUN_UVKIN}"
     echo "  settings : ${PIPELINE_SETTINGS}"
-    echo "  job    : ${JOB_NAME}"
+    echo "  job      : ${JOB_NAME}"
 
     if [[ "${DRY_RUN}" == true ]]; then
         echo "  [DRY] ${CMD}"
