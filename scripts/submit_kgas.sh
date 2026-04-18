@@ -31,7 +31,7 @@ IMAGE="images.canfar.net/skaha/astroml:latest"
 CONDA_ENV="uvkin"
 # Precision is now locked to single (float32 / complex64) inside
 # run_kgas_full.py per Plan Section D — no CLI knob.
-N_PROCESSES=8
+N_PROCESSES=16
 
 ARC_BASE="/arc/projects/KILOGAS/analysis/toby_sandbox"
 VIS_DIR="${ARC_BASE}/visibilities"
