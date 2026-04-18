@@ -22,7 +22,8 @@ shared:
 galaxies:
   KGAS007:
     kilogas_archive_id: KILOGAS007
-    data_path_default: /Users/thbrown/kilogas/DR1/visibilities/KILOGAS007.npz
+    # CANFAR default (submit_kgas.sh passes --data explicitly; local runs override with --data)
+    data_path_default: /arc/projects/KILOGAS/analysis/toby_sandbox/visibilities/KILOGAS007.npz
     vsys: 13547.0         # Updated to Kinematic MAP center
     r_scale: 3.0
     # NSA photometric major-axis PA = 147.4 deg (East-of-North). Red side is
@@ -36,7 +37,8 @@ galaxies:
 
   KGAS066:
     kilogas_archive_id: KILOGAS066
-    data_path_default: /Users/thbrown/kilogas/DR1/visibilities/KILOGAS066.npz
+    # CANFAR default (submit_kgas.sh passes --data explicitly; local runs override with --data)
+    data_path_default: /arc/projects/KILOGAS/analysis/toby_sandbox/visibilities/KILOGAS066.npz
     vsys: 8033.4          # Updated to Kinematic MAP center
     r_scale: 7.0
     # NSA photometric major-axis PA = 13.8 deg (East-of-North). Red side is SSW,

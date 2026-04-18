@@ -1,12 +1,4 @@
-#!/usr/bin/env bash
-# ---------------------------------------------------------------------------
-# Bash only. Invoke as:
-#   bash submit_kgas.sh
-#   bash submit_kgas.sh --dry
-# Do not run with Python (e.g. `python submit_kgas.sh`) — you will get
-# SyntaxError on `set -euo pipefail` because this is shell, not Python.
-# ---------------------------------------------------------------------------
-#
+#!/bin/bash
 # Submit gNFW kinematic fitting jobs on CANFAR.
 #
 # One headless batch job per galaxy in flexible mode
@@ -41,14 +33,18 @@ CONDA_ENV="uvkin"
 # run_kgas_full.py per Plan Section D — no CLI knob.
 N_PROCESSES=8
 
+# CANFAR /arc layout (example for KILOGAS066):
+#   visibilities : ${ARC_BASE}/visibilities/KILOGAS066.npz
+#   results      : ${ARC_BASE}/results/KILOGAS066/
+#   settings     : ${UVKIN_DIR}/config/uvkin_settings.yaml
 ARC_BASE="/arc/projects/KILOGAS/analysis/toby_sandbox"
 VIS_DIR="${ARC_BASE}/visibilities"
 RESULTS_BASE="${ARC_BASE}/results"
 UVKIN_DIR="${ARC_BASE}/uvkin"
-SCRIPT="${UVKIN_DIR}/run_kgas_full.py"
+# Match git checkout layout (run_kgas_full.py lives under src/)
+SCRIPT="${UVKIN_DIR}/src/run_kgas_full.py"
 RUN_UVKIN="${UVKIN_DIR}/scripts/run_uvkin.sh"
-# Shared / galaxies / aggregation (optional override; default is this file beside run_kgas_full.py)
-PIPELINE_SETTINGS="${UVKIN_DIR}/uvkin_settings.yaml"
+PIPELINE_SETTINGS="${UVKIN_DIR}/config/uvkin_settings.yaml"
 
 N_WALKERS=32
 CHECK_INTERVAL=500

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Bash only — run with:  bash run_uvkin.sh …   (not python)
-#
 # Stage KILOGAS visibility data on local SSD (/scratch), run run_kgas_full.py there,
 # then copy logs and results back to the persistent analysis tree — even if the
 # fit exits non-zero or the job receives SIGINT/SIGTERM (SIGKILL cannot be caught).
@@ -13,7 +11,7 @@
 #     --data /arc/.../visibilities/KILOGAS066.npz \
 #     --results-dest /arc/.../results/KILOGAS066 \
 #     --kgas-id KGAS066 \
-#     --pipeline-settings /arc/.../uvkin/uvkin_settings.yaml \
+#     --pipeline-settings /arc/.../uvkin/config/uvkin_settings.yaml \
 #     --script /arc/.../uvkin/run_kgas_full.py \
 #     --conda-env uvkin \
 #     --n-walkers 32 --n-processes 8 --converge \
