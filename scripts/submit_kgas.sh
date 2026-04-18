@@ -57,7 +57,7 @@ echo "=============================================="
 echo "Image     : ${IMAGE}"
 echo "Precision : single (locked in run_kgas_full.py)"
 echo "Processes : ${N_PROCESSES}"
-echo "Mode      : flexible (elastic 1-8 cores, 4-32 GB)"
+echo "Mode      : flexible (elastic 1-16 cores, 4-32 GB)"
 echo "Converge  : tau-based (check every ${CHECK_INTERVAL} steps, max ${MAX_STEPS})"
 echo ""
 
