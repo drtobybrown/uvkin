@@ -1,4 +1,12 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# Bash only. Invoke as:
+#   bash submit_kgas.sh
+#   bash submit_kgas.sh --dry
+# Do not run with Python (e.g. `python submit_kgas.sh`) — you will get
+# SyntaxError on `set -euo pipefail` because this is shell, not Python.
+# ---------------------------------------------------------------------------
+#
 # Submit gNFW kinematic fitting jobs on CANFAR.
 #
 # One headless batch job per galaxy in flexible mode
@@ -31,7 +39,7 @@ IMAGE="images.canfar.net/skaha/astroml:latest"
 CONDA_ENV="uvkin"
 # Precision is now locked to single (float32 / complex64) inside
 # run_kgas_full.py per Plan Section D — no CLI knob.
-N_PROCESSES=16
+N_PROCESSES=8
 
 ARC_BASE="/arc/projects/KILOGAS/analysis/toby_sandbox"
 VIS_DIR="${ARC_BASE}/visibilities"
@@ -57,7 +65,7 @@ echo "=============================================="
 echo "Image     : ${IMAGE}"
 echo "Precision : single (locked in run_kgas_full.py)"
 echo "Processes : ${N_PROCESSES}"
-echo "Mode      : flexible (elastic 1-16 cores, 4-32 GB)"
+echo "Mode      : flexible (elastic 1-8 cores, 4-32 GB)"
 echo "Converge  : tau-based (check every ${CHECK_INTERVAL} steps, max ${MAX_STEPS})"
 echo ""
 

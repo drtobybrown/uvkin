@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Bash only — run with:  bash run_uvkin.sh …   (not python)
+#
 # Stage KILOGAS visibility data on local SSD (/scratch), run run_kgas_full.py there,
 # then copy logs and results back to the persistent analysis tree — even if the
 # fit exits non-zero or the job receives SIGINT/SIGTERM (SIGKILL cannot be caught).
