@@ -106,6 +106,8 @@ def format_config_log(kgas_id: str | None = None, *, pipeline=None) -> str:
                 f"  channel_width_kms: {g.channel_width_kms}",
                 f"  flux_int (S_int/dv_cat diagnostic Jy-sum): {g.flux_int:.6g}",
                 f"  phase_centroid_seed_arcsec: {g.phase_centroid_seed_arcsec}",
+                f"  ra_deg, dec_deg: {g.ra_deg}, {g.dec_deg}",
+                f"  vhi_kms: {g.vhi_kms}",
             ]
         )
     return "\n".join(lines)

@@ -361,7 +361,8 @@ if "phase_dir_rad" in d.files:
         if "field_id" in d.files
         else None
     )
-    lon_deg, lat_deg = float(np.degrees(pd[0])), float(np.degrees(pd[1]))
+    lon_deg = float(np.degrees(pd[0])) % 360.0
+    lat_deg = float(np.degrees(pd[1]))
     log.info(
         ".npz MS phase metadata: field_id=%s phase_dir (deg) lon=%.6f lat=%.6f "
         "(compare to catalog RA/Dec; dx,dy offsets are relative to this centre)",
@@ -369,6 +370,30 @@ if "phase_dir_rad" in d.files:
         lon_deg,
         lat_deg,
     )
+    if _cfg.ra_deg is not None and _cfg.dec_deg is not None:
+        dra = (
+            (_cfg.ra_deg - lon_deg)
+            * np.cos(np.radians(_cfg.dec_deg))
+            * 3600.0
+        )
+        ddec = (_cfg.dec_deg - lat_deg) * 3600.0
+        sep = float(np.hypot(dra, ddec))
+        if sep > 1.0:
+            log.warning(
+                "MS PHASE_DIR deviates from catalogue by %.2f arcsec "
+                "(dra=%+.3f, ddec=%+.3f) — verify --kgas-id matches this .npz.",
+                sep,
+                dra,
+                ddec,
+            )
+        else:
+            log.info(
+                "MS PHASE_DIR within %.3f arcsec of catalogue ra/dec "
+                "(dra=%+.3f, ddec=%+.3f).",
+                sep,
+                dra,
+                ddec,
+            )
 
 u_m_all, v_m_all, vis_all, weights_all = cast_uv_arrays(
     u_m_all, v_m_all, vis_all, weights_all, PRECISION,

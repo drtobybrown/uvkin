@@ -13,42 +13,54 @@ shared:
   weight_scale_factor: 0.5  # Hanning smoothing covariance correction; 1.0 = no correction
 
 # ---------------------------------------------------------------------------
-# Galaxy catalog
-# Seeds: pa_init is the KinMS `posAng` of the REDSHIFTED side, measured CW
-# from North (0=N, 90=W, 180=S, 270=E). To convert a standard astronomical
-# major-axis PA (East-of-North) with red side at +180 from it, use
-#     pa_init = (360 - PA_astro_of_red_side) mod 360
+# Galaxy catalog (values from kilogas/analysis/catalogues/kgas007_066_catalogue.csv
+# unless otherwise noted).
+#
+# KinMS `posAng` convention: angle from North through E-of-N direction?  No.
+# KinMS measures `posAng` CLOCKWISE from North (0=N, 90=W, 180=S, 270=E) and
+# points to the REDSHIFTED (receding) major-axis tip. `pa_init` below is set
+# from the redshifted-side knowledge rather than the raw catalogue `PA`
+# column (which is photometric only): KGAS066 red side SSW -> pa_init=166.2;
+# KGAS007 red side SSE -> pa_init=212.6. See kinms.posAng documentation.
+#
+# `ra_deg`, `dec_deg` are the catalogue ICRS coordinates (NSA/MGE), used by
+# run_kgas_full to cross-check the MS PHASE_DIR stored in the .npz and warn
+# on separations > 1 arcsec.
 # ---------------------------------------------------------------------------
 galaxies:
   KGAS007:
     kilogas_archive_id: KILOGAS007
     # CANFAR default (submit_kgas.sh passes --data explicitly; local runs override with --data)
     data_path_default: /arc/projects/KILOGAS/analysis/toby_sandbox/visibilities/KILOGAS007.npz
-    vsys: 13547.0         # Updated to Kinematic MAP center
-    r_scale: 3.0
-    # NSA photometric major-axis PA = 147.4 deg (East-of-North). Red side is
-    # SSE, i.e. the 147.4 deg E-of-N end of the major axis. KinMS posAng is
-    # CW from North (= -astro_PA mod 360), so posAng = 360 - 147.4 = 212.6 deg.
+    ra_deg: 146.576065         # catalogue
+    dec_deg: 2.88434           # catalogue
+    vsys: 14229.0              # cz from catalogue z=0.047463 (no VHI)
+    vhi_kms: null              # not available in catalogue
+    r_scale: 3.0               # approx. Re_R_arcsec=3.20
+    # pa_init = KinMS posAng of redshifted tip (red side = SSE, so ~212.6 deg CW from N).
     pa_init: 212.6
-    inc_init: 28.9
+    inc_init: 28.9             # acos(ba=0.8753) = 28.92 deg
     obs_freq_range_ghz: [219.999, 220.205]
-    flux_int_jy_kms: 24.132
-    phase_centroid_seed_arcsec: [-0.087, 0.187] # Updated to best-fit centroid
+    flux_int_jy_kms: 24.132    # Sco_deltaV (integrated Jy*km/s)
+    # MS PHASE_DIR matches catalogue ra/decl to <1 mas; start MCMC dx,dy at origin.
+    phase_centroid_seed_arcsec: [0.0, 0.0]
 
   KGAS066:
     kilogas_archive_id: KILOGAS066
     # CANFAR default (submit_kgas.sh passes --data explicitly; local runs override with --data)
     data_path_default: /arc/projects/KILOGAS/analysis/toby_sandbox/visibilities/KILOGAS066.npz
-    vsys: 8033.4          # Updated to Kinematic MAP center
-    r_scale: 7.0
-    # NSA photometric major-axis PA = 13.8 deg (East-of-North). Red side is SSW,
-    # i.e. the 193.8 deg E-of-N end of the major axis. KinMS posAng is CW from
-    # North (= -astro_PA mod 360), so posAng = 360 - 193.8 = 166.2 deg.
+    ra_deg: 345.667969         # catalogue
+    dec_deg: 13.32909          # catalogue
+    vsys: 8305.0               # catalogue VHI (HI line)
+    vhi_kms: 8305.0
+    r_scale: 7.0               # approx. Re_R_arcsec=7.36
+    # pa_init = KinMS posAng of redshifted tip (red side = SSW, so ~166.2 deg CW from N).
     pa_init: 166.2
-    inc_init: 43.8
+    inc_init: 43.8             # acos(ba=0.7214) = 43.83 deg
     obs_freq_range_ghz: [224.148, 224.506]
-    flux_int_jy_kms: 102.482
-    phase_centroid_seed_arcsec: [0.789, 1.415]  # Updated to best-fit centroid
+    flux_int_jy_kms: 102.482   # Sco_deltaV (integrated Jy*km/s)
+    # MS PHASE_DIR matches catalogue ra/decl to <1 mas; start MCMC dx,dy at origin.
+    phase_centroid_seed_arcsec: [0.0, 0.0]
 
 # ---------------------------------------------------------------------------
 # Visibility aggregation
@@ -69,7 +81,10 @@ aggregation:
 # emcee / uvfit priors
 # ---------------------------------------------------------------------------
 mcmc_bounds:
-  vsys_offset_kms: [-50.0, 50.0]
+  # Widened from ±50 km/s after catalogue audit: catalogue VHI / cz(z) seed
+  # uncertainty can be several tens of km/s; ±200 covers both without the
+  # wall-hugging failure mode observed on KGAS066/007.
+  vsys_offset_kms: [-200.0, 200.0]
   gas_sigma: [3.0, 80.0]   # Upper raised so σ is not forced to a wall when geometry is off
 
   # Integrated flux S_int (Jy·km/s): MCMC flux box is [low×S_int, high×S_int]

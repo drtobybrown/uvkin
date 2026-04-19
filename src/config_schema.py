@@ -28,6 +28,13 @@ class GalaxyConfig:
     flux_int_jy_kms: float
     channel_width_kms: float
     phase_centroid_seed_arcsec: Tuple[float, float] | None = None
+    # Catalogue astrometry (degrees, ICRS). When populated, ``run_kgas_full``
+    # compares these to the MS ``PHASE_DIR`` stored in the .npz and warns
+    # on separations > 1 arcsec (catches mis-phased MS / wrong galaxy key).
+    ra_deg: float | None = None
+    dec_deg: float | None = None
+    # HI recession velocity (km/s) when available; provenance only.
+    vhi_kms: float | None = None
 
     @property
     def flux_int(self) -> float:

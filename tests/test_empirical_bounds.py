@@ -38,6 +38,20 @@ def test_vsys_width():
     assert b["vsys"] == (-40.0, 60.0)
 
 
+def test_vsys_width_widened_200():
+    """Covers the YAML default ±200 km/s prior added 2026-04-18."""
+    mb = McmcBoundsConfig(
+        vsys_offset_kms=(-200.0, 200.0),
+        gas_sigma=(3.0, 30.0),
+        flux_multipliers=(0.5, 2.0),
+        gamma=(0.0, 2.0),
+        inc_half_width_deg=30.0,
+        pa_half_width_deg=40.0,
+    )
+    b = get_empirical_bounds(8305.0, 1.0, 45.0, 0.0, mcmc_bounds=mb)
+    assert b["vsys"] == (8105.0, 8505.0)
+
+
 def test_gas_sigma_gamma():
     b = get_empirical_bounds(0.0, 1.0, 45.0, 0.0, mcmc_bounds=_FIXED_MB)
     assert b["gas_sigma"] == (3.0, 30.0)

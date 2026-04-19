@@ -16,11 +16,21 @@ def test_load_full_settings():
     assert "KGAS007" in pipe.galaxies
     assert "KGAS066" in pipe.galaxies
     g7 = pipe.galaxies["KGAS007"]
+    g66 = pipe.galaxies["KGAS066"]
     assert g7.channel_width_kms == pipe.shared.default_channel_width_kms
-    assert g7.phase_centroid_seed_arcsec is not None
+    assert g7.phase_centroid_seed_arcsec == (0.0, 0.0)
+    assert g66.phase_centroid_seed_arcsec == (0.0, 0.0)
+    assert g7.vsys == 14229.0
+    assert g66.vsys == 8305.0
+    assert g66.vhi_kms == 8305.0
+    assert g7.vhi_kms is None
+    assert g7.ra_deg == pytest.approx(146.576065)
+    assert g7.dec_deg == pytest.approx(2.88434)
+    assert g66.ra_deg == pytest.approx(345.667969)
+    assert g66.dec_deg == pytest.approx(13.32909)
     assert pipe.aggregation.time_bin_s == 30.0
     assert pipe.aggregation.spectral_bin_factor == 4
-    assert pipe.mcmc_bounds.vsys_offset_kms == (-50.0, 50.0)
+    assert pipe.mcmc_bounds.vsys_offset_kms == (-200.0, 200.0)
     assert pipe.mcmc_bounds.inc_half_width_deg == 90.0
     assert pipe.mcmc_bounds.flux_multipliers == (0.05, 10.0)
     assert pipe.mcmc_bounds.gas_sigma == (3.0, 80.0)
@@ -30,7 +40,7 @@ def test_load_full_settings():
 def test_load_explicit_path():
     here = Path(__file__).resolve().parent.parent / "config" / "uvkin_settings.yaml"
     pipe = load_pipeline_settings(here)
-    assert pipe.galaxies["KGAS066"].vsys == 8033.4
+    assert pipe.galaxies["KGAS066"].vsys == 8305.0
 
 
 def test_missing_file():
