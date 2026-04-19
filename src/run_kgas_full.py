@@ -559,8 +559,11 @@ log.info(
     _gas_sigma_floor,
 )
 
+# KinMS ``vSys`` is absolute LOS velocity (km/s), same convention as
+# ``vel_trim`` from ``C_KMS * (1 - nu / f_rest)``. Offsets in YAML are
+# applied around the catalogue ``VSYS``, *not* around zero.
 empirical_bounds = get_empirical_bounds(
-    vsys_int=0.0,
+    vsys_int=VSYS,
     flux_int=mcmc_flux_jy_kms,
     inc_int=INC_INIT,
     pa_int=PA_INIT,
@@ -814,7 +817,7 @@ init_params = {
     "inc": INC_INIT,
     "pa": PA_INIT,
     "flux": mcmc_flux_jy_kms,
-    "vsys": 0.0,
+    "vsys": float(VSYS),
     "gas_sigma": 10.0,
     "gamma": 0.5,
     "dx": float(_centroid_seed[0]),
