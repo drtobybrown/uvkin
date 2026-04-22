@@ -47,14 +47,12 @@ galaxies:
     data_path_default: /arc/projects/KILOGAS/analysis/toby_sandbox/visibilities/KILOGAS066.npz
     ra_deg: 345.667969         # catalogue
     dec_deg: 13.32909          # catalogue
-    vsys: 8305.0               # catalogue VHI (HI line)
     vhi_kms: 8305.0
-    r_scale: 7.0               # approx. Re_R_arcsec=7.36
-    # pa_init = KinMS posAng of redshifted tip (red side = SSW, so ~166.2 deg CW from N).
-    pa_init: 166.2
-    inc_init: 43.8             # acos(ba=0.7214) = 43.83 deg
-    obs_freq_range_ghz: [224.148, 224.506]
-    flux_int_jy_kms: 102.482   # Sco_deltaV (integrated Jy*km/s)
+    r_scale: 3.0               # arcsec
+    pa_init: 205.212
+    inc_init: 51.690
+    vsys: 8299.563
+    flux_int_jy_kms: 160.055473
     # MS PHASE_DIR matches catalogue ra/decl to <1 mas; start MCMC dx,dy at origin.
     phase_centroid_seed_arcsec: [0.0, 0.0]
 
