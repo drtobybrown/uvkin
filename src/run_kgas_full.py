@@ -264,13 +264,18 @@ def write_bestfit_cube_fits(
     *,
     cellsize_arcsec,
     f_rest_hz,
+    ra_deg,
+    dec_deg,
+    specsys="LSRK",
+    radesys="ICRS",
+    equinox=None,
 ):
     """
     Write a (v, y, x) model cube to FITS with a 3D WCS (RA, Dec, VRAD).
 
-    Phase centre (CRVAL1/2) uses a placeholder; replace with the true
-    field centre when available. Spectral axis is barycentric radio
-    velocity in m s^-1 (VRAD).
+    Spatial WCS is centered on the supplied phase centre coordinates.
+    Spectral axis is radio velocity in m s^-1 (CTYPE3=VRAD) with
+    explicit reference frame in SPECSYS.
     """
     nv, ny, nx = cube_vyx.shape
     if vel_kms.size != nv:
@@ -286,7 +291,7 @@ def write_bestfit_cube_fits(
 
     w = WCS(naxis=3)
     w.wcs.crpix = [nx / 2.0 + 0.5, ny / 2.0 + 0.5, 1.0]
-    w.wcs.crval = [180.0, 45.0, float(vel64[0]) * 1000.0]
+    w.wcs.crval = [float(ra_deg), float(dec_deg), float(vel64[0]) * 1000.0]
     w.wcs.cdelt = np.array(
         [-cellsize_arcsec / 3600.0, cellsize_arcsec / 3600.0, cdelt3_ms]
     )
@@ -295,13 +300,20 @@ def write_bestfit_cube_fits(
 
     header = w.to_header()
     header["RESTFRQ"] = (float(f_rest_hz), "Rest frequency (Hz)")
-    header["BUNIT"] = ("Jy/beam", "Brightness unit")
+    header["SPECSYS"] = (str(specsys).upper(), "Reference frame of spectral coordinates")
+    header["RADESYS"] = (str(radesys), "Spatial coordinate reference frame")
+    if equinox is not None:
+        header["EQUINOX"] = (float(equinox), "Equinox of celestial coordinate system")
+    header["BUNIT"] = ("Jy/pixel", "Brightness unit")
     header["BMAJ"] = (cellsize_arcsec / 3600.0, "Beam major axis (deg)")
     header["BMIN"] = (cellsize_arcsec / 3600.0, "Beam minor axis (deg)")
     header["BPA"] = (0.0, "Beam position angle (deg)")
     header.add_history("Model cube from uvkin run_kgas_full.py (KinMS gNFW fit).")
     header.add_history(
-        "CRVAL1/CRVAL2 are placeholders; set to field centre for science use."
+        f"WCS phase centre set from visibility metadata/catalogue: RA={float(ra_deg):.8f} deg, DEC={float(dec_deg):.8f} deg."
+    )
+    header.add_history(
+        f"Spectral axis is VRAD in m/s with SPECSYS={str(specsys).upper()}."
     )
 
     hdu = fits.PrimaryHDU(data=np.asarray(cube_vyx, dtype=np.float32), header=header)
@@ -350,6 +362,25 @@ freqs_all = d["freqs"]
 vis_all = d["vis"]
 weights_all = d["weights"]
 time_arr, baseline_arr = extract_time_and_baseline(d)
+phase_ra_deg = float(_cfg.ra_deg) if _cfg.ra_deg is not None else 180.0
+phase_dec_deg = float(_cfg.dec_deg) if _cfg.dec_deg is not None else 45.0
+specsys_cube = "LSRK"
+if "specsys" in d.files:
+    _spec = np.asarray(d["specsys"]).ravel()
+    if _spec.size > 0:
+        _v = _spec[0]
+        if isinstance(_v, (bytes, np.bytes_)):
+            specsys_cube = _v.decode("utf-8", errors="ignore")
+        else:
+            specsys_cube = str(_v)
+elif "SPECSYS" in d.files:
+    _spec = np.asarray(d["SPECSYS"]).ravel()
+    if _spec.size > 0:
+        _v = _spec[0]
+        if isinstance(_v, (bytes, np.bytes_)):
+            specsys_cube = _v.decode("utf-8", errors="ignore")
+        else:
+            specsys_cube = str(_v)
 log.info(
     "Loaded %d baselines x %d channels in %.1fs",
     u_m_all.shape[0], freqs_all.shape[0], time.time() - t0,
@@ -363,6 +394,8 @@ if "phase_dir_rad" in d.files:
     )
     lon_deg = float(np.degrees(pd[0])) % 360.0
     lat_deg = float(np.degrees(pd[1]))
+    phase_ra_deg = lon_deg
+    phase_dec_deg = lat_deg
     log.info(
         ".npz MS phase metadata: field_id=%s phase_dir (deg) lon=%.6f lat=%.6f "
         "(compare to catalog RA/Dec; dx,dy offsets are relative to this centre)",
@@ -394,6 +427,20 @@ if "phase_dir_rad" in d.files:
                 dra,
                 ddec,
             )
+else:
+    log.warning(
+        ".npz has no phase_dir_rad; using catalogue RA/Dec for cube WCS "
+        "(RA=%.6f, Dec=%.6f).",
+        phase_ra_deg,
+        phase_dec_deg,
+    )
+
+log.info(
+    "Best-fit cube WCS target: phase centre RA=%.6f deg Dec=%.6f deg, SPECSYS=%s.",
+    phase_ra_deg,
+    phase_dec_deg,
+    specsys_cube,
+)
 
 u_m_all, v_m_all, vis_all, weights_all = cast_uv_arrays(
     u_m_all, v_m_all, vis_all, weights_all, PRECISION,
@@ -919,6 +966,10 @@ try:
         vel_trim,
         cellsize_arcsec=CELLSIZE,
         f_rest_hz=F_REST,
+        ra_deg=phase_ra_deg,
+        dec_deg=phase_dec_deg,
+        specsys=specsys_cube,
+        radesys="ICRS",
     )
 except OSError as exc:
     log.error("Failed to write %s: %s", cube_fits_path, exc)
