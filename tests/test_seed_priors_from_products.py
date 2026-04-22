@@ -3,7 +3,11 @@ from __future__ import annotations
 import numpy as np
 from astropy.wcs import WCS
 
-from prior_seed import estimate_geometry_prior, estimate_spectrum_prior
+from prior_seed import (
+    estimate_geometry_prior,
+    estimate_r_scale_prior,
+    estimate_spectrum_prior,
+)
 
 
 def _toy_wcs() -> WCS:
@@ -41,7 +45,7 @@ def test_estimate_geometry_prior_recovers_receding_axis():
     # map to the 180-deg equivalent orientation.
     assert _axis_diff_mod180(g.major_axis_pa_en_deg, 150.0) <= 5.0
     assert np.isclose(g.receding_pa_en_deg, 330.0, atol=10.0)
-    assert np.isclose(g.kinms_pa_deg, 30.0, atol=10.0)
+    assert np.isclose(g.kinms_pa_deg, 330.0, atol=10.0)
     assert 0.0 <= g.inc_deg <= 90.0
     assert 0.0 < g.axis_ratio_b_over_a <= 1.0
 
@@ -57,3 +61,18 @@ def test_estimate_spectrum_prior_basic():
     assert s.flux_int_jy_kms > 0.0
     assert 100.0 < s.line_width_kms < 300.0
     assert np.isclose(s.baseline_mjy, baseline, atol=2.0)
+
+
+def test_estimate_r_scale_prior_returns_arcsec():
+    ny, nx = 100, 100
+    y, x = np.indices((ny, nx))
+    xc = (nx - 1) / 2.0
+    yc = (ny - 1) / 2.0
+    # Circular Gaussian with sigma=12 px. With 0.1"/px, expected r50~1.413".
+    rr = np.hypot(x - xc, y - yc)
+    mom0 = np.exp(-0.5 * (rr / 12.0) ** 2)
+
+    r = estimate_r_scale_prior(moment0=mom0, wcs2d=_toy_wcs())
+    assert np.isclose(r.r50_arcsec, 1.413, atol=0.12)
+    assert np.isclose(r.r_scale_arcsec, r.r50_arcsec / 1.678, atol=1e-6)
+    assert 0.0 < r.r_scale_arcsec < 10.0

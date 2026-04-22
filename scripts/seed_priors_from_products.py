@@ -14,6 +14,7 @@ if str(_SRC) not in sys.path:
 
 from prior_seed import (
     estimate_geometry_prior,
+    estimate_r_scale_prior,
     estimate_spectrum_prior,
     load_moment_fits,
     load_spectrum_csv,
@@ -23,8 +24,8 @@ from prior_seed import (
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
-            "Estimate KinMS-compatible priors from moment1 + spectrum and emit "
-            "YAML-ready fields plus CLI flags."
+            "Estimate KinMS-compatible priors from moment1/moment0 + spectrum and "
+            "emit YAML-ready fields plus CLI flags."
         )
     )
     p.add_argument("--kgas-id", required=True, help="e.g. KGAS066")
@@ -43,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         m0, _ = load_moment_fits(Path(args.moment0_fits))
 
     geom = estimate_geometry_prior(moment1=m1, moment0=m0, wcs2d=wcs2d)
+    rscale = estimate_r_scale_prior(moment0=m0, wcs2d=wcs2d) if m0 is not None else None
     flux_mjy, vel_kms = load_spectrum_csv(Path(args.spectrum_csv))
     spec = estimate_spectrum_prior(flux_mjy=flux_mjy, vel_kms=vel_kms)
 
@@ -64,6 +66,11 @@ def main(argv: list[str] | None = None) -> int:
             "baseline_mjy": spec.baseline_mjy,
         },
     }
+    if rscale is not None:
+        payload["r_scale"] = {
+            "r50_arcsec": rscale.r50_arcsec,
+            "r_scale_arcsec": rscale.r_scale_arcsec,
+        }
 
     if args.out_json:
         out_path = Path(args.out_json)
@@ -76,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  inc_init: {geom.inc_deg:.3f}")
     print(f"  vsys: {spec.vsys_kms:.3f}")
     print(f"  flux_int_jy_kms: {spec.flux_int_jy_kms:.6f}")
+    if rscale is not None:
+        print(f"  r_scale: {rscale.r_scale_arcsec:.3f}  # arcsec")
     print("")
     print("### CLI flags")
     print(
@@ -84,6 +93,19 @@ def main(argv: list[str] | None = None) -> int:
         f"--vsys {spec.vsys_kms:.3f} "
         f"--line-width-kms {spec.line_width_kms:.3f}"
     )
+    if rscale is not None:
+        print(
+            "run_kgas_full.py "
+            f"--kgas-id {args.kgas_id} "
+            f"--r-scale {rscale.r_scale_arcsec:.3f}"
+        )
+        rs_lo = 0.8 * rscale.r_scale_arcsec
+        rs_hi = 1.2 * rscale.r_scale_arcsec
+        print(
+            "submit_debug_matrix.sh "
+            f"--kgas-id {args.kgas_id} "
+            f"--r-scale-grid {rs_lo:.3f},{rscale.r_scale_arcsec:.3f},{rs_hi:.3f}"
+        )
     print(
         "submit_debug_matrix.sh "
         f"--kgas-id {args.kgas_id} "
@@ -100,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
         f"vsys={spec.vsys_kms:.3f} km/s, flux_int={spec.flux_int_jy_kms:.6f} Jy km/s, "
         f"line width={spec.line_width_kms:.3f} km/s"
     )
+    if rscale is not None:
+        print(
+            f"r50={rscale.r50_arcsec:.3f} arcsec, "
+            f"r_scale={rscale.r_scale_arcsec:.3f} arcsec"
+        )
     return 0
 
 

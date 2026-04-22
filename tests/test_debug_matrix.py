@@ -11,6 +11,7 @@ from debug_matrix import MatrixAxes, cap_jobs, expand_jobs, materialize_job_sett
 def test_expand_jobs_deterministic_order():
     axes = MatrixAxes(
         pa_init_deg=(10.0, 20.0),
+        r_scale_arcsec=(6.0,),
         pa_half_width_deg=(30.0,),
         inc_half_width_deg=(90.0,),
         line_width_kms=(400.0, 500.0),
@@ -19,9 +20,9 @@ def test_expand_jobs_deterministic_order():
     )
     jobs = expand_jobs(axes)
     assert len(jobs) == 8
-    assert jobs[0]["job_tag"] == "pa10_pahw30_lw400_sb1_uvbin1"
-    assert jobs[1]["job_tag"] == "pa10_pahw30_lw400_sb1_uvbin0"
-    assert jobs[-1]["job_tag"] == "pa20_pahw30_lw500_sb1_uvbin0"
+    assert jobs[0]["job_tag"] == "pa10_rs60_pahw30_lw400_sb1_uvbin1"
+    assert jobs[1]["job_tag"] == "pa10_rs60_pahw30_lw400_sb1_uvbin0"
+    assert jobs[-1]["job_tag"] == "pa20_rs60_pahw30_lw500_sb1_uvbin0"
 
 
 def test_cap_jobs_raises_without_truncate():
@@ -89,6 +90,7 @@ def test_materialize_job_settings_writes_expected_overrides(tmp_path: Path):
         {
             "job_tag": "caseA",
             "pa_init_deg": 330.0,
+            "r_scale_arcsec": 9.5,
             "pa_half_width_deg": 120.0,
             "inc_half_width_deg": 90.0,
             "spectral_bin_factor": 1,
@@ -107,6 +109,7 @@ def test_materialize_job_settings_writes_expected_overrides(tmp_path: Path):
     assert out_path.is_file()
     rendered = yaml.safe_load(out_path.read_text(encoding="utf-8"))
     assert rendered["galaxies"]["KGAS066"]["pa_init"] == pytest.approx(330.0)
+    assert rendered["galaxies"]["KGAS066"]["r_scale"] == pytest.approx(9.5)
     assert rendered["mcmc_bounds"]["pa_half_width_deg"] == pytest.approx(120.0)
     assert rendered["mcmc_bounds"]["inc_half_width_deg"] == pytest.approx(90.0)
     assert rendered["aggregation"]["spectral_bin_factor"] == 1

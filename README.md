@@ -92,6 +92,7 @@ bash scripts/submit_debug_matrix.sh \
   --results-base /arc/projects/KILOGAS/analysis/toby_sandbox/results \
   --uvkin-dir /arc/projects/KILOGAS/analysis/toby_sandbox/uvkin \
   --pa-init-grid "154.8,166.2,334.8" \
+  --r-scale-grid "5.5,7.0,8.5" \
   --pa-half-width-grid "50,120,180" \
   --inc-half-width-grid "90" \
   --spectral-bin-grid "1,4" \
@@ -102,6 +103,7 @@ Default debug matrix behavior now includes:
 
 - `pa_half_width_deg` sweep including `180` (tests `PA ±180` search box)
 - `inc_half_width_deg=90` (physical clamp to `inc ∈ [0, 90]`)
+- `r_scale` inherited from base YAML unless `--r-scale-grid` is set (units: arcsec)
 - `max_steps=20000` in matrix submissions
 
 Each matrix run writes to:
@@ -149,6 +151,10 @@ python scripts/seed_priors_from_products.py \
 
 The script prints:
 
-- YAML-ready values for `galaxies.<KGAS_ID>` (`pa_init`, `inc_init`, `vsys`, `flux_int_jy_kms`)
+- YAML-ready values for `galaxies.<KGAS_ID>` (`pa_init`, `inc_init`, `vsys`, `flux_int_jy_kms`, `r_scale`)
 - `run_kgas_full.py` flags for line-mask setup (`--vsys`, `--line-width-kms`)
+- `run_kgas_full.py --r-scale ...` and `submit_debug_matrix.sh --r-scale-grid ...` hints
 - a recommended `submit_debug_matrix.sh --pa-init-grid ...` seed pair (PA and PA+180)
+
+`r_scale` is emitted in **arcsec**, estimated from the moment-0 half-light radius
+(`r50`) with an exponential-disk conversion `r_scale = r50 / 1.678`.

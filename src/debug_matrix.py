@@ -25,6 +25,7 @@ class MatrixAxes:
     """Parameter axes for debug-matrix expansion."""
 
     pa_init_deg: tuple[float, ...]
+    r_scale_arcsec: tuple[float, ...]
     pa_half_width_deg: tuple[float, ...]
     inc_half_width_deg: tuple[float, ...]
     line_width_kms: tuple[float, ...]
@@ -64,16 +65,18 @@ def _bool_label(v: bool) -> str:
 
 def _job_tag(
     pa_init: float,
+    r_scale_arcsec: float,
     pa_half_width: float,
     line_width: float,
     spectral_bin: int,
     uv_bin: bool,
 ) -> str:
     pai = int(round(pa_init))
+    rs = int(round(10.0 * r_scale_arcsec))
     pah = int(round(pa_half_width))
     lw = int(round(line_width))
     return (
-        f"pa{pai}_pahw{pah}_lw{lw}"
+        f"pa{pai}_rs{rs}_pahw{pah}_lw{lw}"
         f"_sb{int(spectral_bin)}_uvbin{_bool_label(uv_bin)}"
     )
 
@@ -95,6 +98,7 @@ def _default_axes() -> MatrixAxes:
     # 3 * 3 * 1 * 2 * 2 * 2 = 72 jobs (<=100 default cap).
     return MatrixAxes(
         pa_init_deg=(154.8, 166.2, 334.8),
+        r_scale_arcsec=(7.0,),
         pa_half_width_deg=(50.0, 120.0, 180.0),
         # 90 deg half-width clamps to physical [0, 90] inclination in bounds builder.
         inc_half_width_deg=(90.0,),
@@ -110,6 +114,7 @@ def expand_jobs(axes: MatrixAxes) -> list[dict[str, Any]]:
     for idx, vals in enumerate(
         itertools.product(
             axes.pa_init_deg,
+            axes.r_scale_arcsec,
             axes.pa_half_width_deg,
             axes.inc_half_width_deg,
             axes.line_width_kms,
@@ -118,11 +123,12 @@ def expand_jobs(axes: MatrixAxes) -> list[dict[str, Any]]:
         ),
         start=1,
     ):
-        pa_init, pa_half, inc_half, line_width, spectral_bin, uv_bin = vals
+        pa_init, r_scale, pa_half, inc_half, line_width, spectral_bin, uv_bin = vals
         jobs.append(
             {
                 "job_index": idx,
                 "pa_init_deg": float(pa_init),
+                "r_scale_arcsec": float(r_scale),
                 "pa_half_width_deg": float(pa_half),
                 "inc_half_width_deg": float(inc_half),
                 "line_width_kms": float(line_width),
@@ -130,6 +136,7 @@ def expand_jobs(axes: MatrixAxes) -> list[dict[str, Any]]:
                 "apply_uv_binning": bool(uv_bin),
                 "job_tag": _job_tag(
                     float(pa_init),
+                    float(r_scale),
                     float(pa_half),
                     float(line_width),
                     int(spectral_bin),
@@ -176,6 +183,7 @@ def materialize_job_settings(
     for job in jobs:
         payload = json.loads(json.dumps(base))
         payload["galaxies"][kgas_id]["pa_init"] = float(job["pa_init_deg"])
+        payload["galaxies"][kgas_id]["r_scale"] = float(job["r_scale_arcsec"])
         payload["mcmc_bounds"]["pa_half_width_deg"] = float(job["pa_half_width_deg"])
         payload["mcmc_bounds"]["inc_half_width_deg"] = float(job["inc_half_width_deg"])
         payload["aggregation"]["spectral_bin_factor"] = int(job["spectral_bin_factor"])
@@ -231,6 +239,7 @@ def write_manifest(path: Path, jobs: Iterable[dict[str, Any]]) -> None:
         "canfar_name",
         "kgas_id",
         "pa_init_deg",
+        "r_scale_arcsec",
         "pa_half_width_deg",
         "inc_half_width_deg",
         "line_width_kms",
@@ -356,6 +365,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     # Axis overrides (comma-separated).
     p.add_argument("--pa-init-grid", default="154.8,166.2,334.8")
+    p.add_argument("--r-scale-grid", default="")
     p.add_argument("--pa-half-width-grid", default="50,120,180")
     p.add_argument("--inc-half-width-grid", default="90")
     p.add_argument("--line-width-grid", default="500,700")
@@ -417,8 +427,21 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     axes = _default_axes()
+    base_yaml = _load_yaml(cfg.base_pipeline_settings)
+    try:
+        base_r_scale = float(base_yaml["galaxies"][cfg.kgas_id]["r_scale"])
+    except Exception as exc:
+        raise KeyError(
+            f"Unable to load base r_scale for {cfg.kgas_id} from {cfg.base_pipeline_settings}"
+        ) from exc
+    r_scale_grid = (
+        _parse_csv_floats(args.r_scale_grid)
+        if str(args.r_scale_grid).strip()
+        else (base_r_scale,)
+    )
     axes = MatrixAxes(
         pa_init_deg=_parse_csv_floats(args.pa_init_grid) or axes.pa_init_deg,
+        r_scale_arcsec=r_scale_grid,
         pa_half_width_deg=_parse_csv_floats(args.pa_half_width_grid)
         or axes.pa_half_width_deg,
         inc_half_width_deg=_parse_csv_floats(args.inc_half_width_grid)

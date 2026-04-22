@@ -29,6 +29,12 @@ class SpectrumPrior:
     line_vel_hi_kms: float
 
 
+@dataclass(frozen=True)
+class RScalePrior:
+    r50_arcsec: float
+    r_scale_arcsec: float
+
+
 def _weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
     order = np.argsort(values)
     v = values[order]
@@ -56,8 +62,8 @@ def _weighted_quantile(values: np.ndarray, weights: np.ndarray, q: float) -> flo
 
 
 def _kinms_pa_from_receding_en(pa_receding_en_deg: float) -> float:
-    # KinMS posAng = clockwise from North toward receding tip.
-    return float((360.0 - pa_receding_en_deg) % 360.0)
+    # Treat pa_init as receding-side PA in standard East-of-North convention.
+    return float(pa_receding_en_deg % 360.0)
 
 
 def _trapz_compat(y: np.ndarray, x: np.ndarray) -> float:
@@ -91,7 +97,7 @@ def estimate_geometry_prior(
     Returns PA in:
       - East-of-North major-axis convention
       - receding-side East-of-North
-      - KinMS clockwise-from-North receding-tip convention.
+      - KinMS `pa_init` convention used by this pipeline (receding E-of-N).
     """
     m1 = np.asarray(moment1, dtype=np.float64)
     finite = np.isfinite(m1)
@@ -212,3 +218,34 @@ def estimate_spectrum_prior(
         line_vel_lo_kms=vel_lo,
         line_vel_hi_kms=vel_hi,
     )
+
+
+def estimate_r_scale_prior(
+    *,
+    moment0: np.ndarray,
+    wcs2d: WCS,
+) -> RScalePrior:
+    """Estimate radial scale prior from moment0 surface-brightness map.
+
+    Returned units are arcsec. We compute:
+      - r50_arcsec: weighted half-light radius
+      - r_scale_arcsec: exponential scale proxy r50 / 1.678
+    """
+    m0 = np.asarray(moment0, dtype=np.float64)
+    finite = np.isfinite(m0) & (m0 > 0)
+    if np.sum(finite) < 16:
+        raise ValueError("Insufficient finite/positive pixels in moment0 for r_scale estimate")
+
+    y, x = np.indices(m0.shape)
+    x_f = x[finite]
+    y_f = y[finite]
+    w_f = m0[finite].astype(np.float64)
+
+    east, north = _plane_offsets_arcsec(x_f, y_f, wcs2d)
+    e0 = float(np.average(east, weights=w_f))
+    n0 = float(np.average(north, weights=w_f))
+    rr = np.hypot(east - e0, north - n0)
+
+    r50 = _weighted_quantile(rr, w_f, 0.5)
+    r_scale = float(max(r50 / 1.678, 1e-6))
+    return RScalePrior(r50_arcsec=float(r50), r_scale_arcsec=r_scale)
