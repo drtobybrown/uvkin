@@ -53,6 +53,8 @@ galaxies:
     inc_init: 51.690
     vsys: 8299.563
     flux_int_jy_kms: 160.055473
+    # Observed CO(2–1) band in GHz (spectral trim / vmax from obs band when used).
+    obs_freq_range_ghz: [224.148, 224.506]
     # MS PHASE_DIR matches catalogue ra/decl to <1 mas; start MCMC dx,dy at origin.
     phase_centroid_seed_arcsec: [0.0, 0.0]
 
