@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Submit a uvkin debug matrix to CANFAR (submit-only mode).
+# Submit a uvkin seed matrix to CANFAR (submit-only mode).
 #
 # Writes:
 #   - matrix_manifest.csv
@@ -8,9 +8,9 @@
 #   - matrix_summary.json
 #
 # Usage:
-#   bash submit_debug_matrix.sh --kgas-id KGAS066
-#   bash submit_debug_matrix.sh --kgas-id KGAS066 --dry-run
-#   bash submit_debug_matrix.sh --kgas-id KGAS066 --max-jobs 72 --truncate
+#   bash scripts/submit_seed_matrix.sh --kgas-id KGAS066
+#   bash scripts/submit_seed_matrix.sh --kgas-id KGAS066 --dry-run
+#   bash scripts/submit_seed_matrix.sh --kgas-id KGAS066 --max-jobs 100
 set -euo pipefail
 
 KGAS_ID=""
@@ -46,7 +46,7 @@ DATA_PATH_OVERRIDE=""
 
 usage() {
     cat <<'EOF'
-submit_debug_matrix.sh — submit uvkin convergence debug matrix to CANFAR.
+submit_seed_matrix.sh — submit uvkin seed matrix to CANFAR.
 
 Required:
   --kgas-id ID                  e.g. KGAS066
@@ -68,6 +68,10 @@ Axis overrides (comma-separated):
   --line-width-grid CSV         default: 500,700
   --spectral-bin-grid CSV       default: 1,4
   --uv-bin-grid CSV             default: true,false
+
+Paths (CANFAR / shared ARC):
+  Set ARC_BASE (environment) or pass --arc-base to point at your sandbox root.
+  That root should contain visibilities/, results/, and uvkin/ as used below.
 EOF
     exit 2
 }
@@ -129,15 +133,23 @@ if [[ ! -f "${DATA_PATH}" ]]; then
     exit 2
 fi
 
+SEED_MATRIX_PY="${UVKIN_DIR}/src/seed_matrix.py"
+if [[ ! -f "${SEED_MATRIX_PY}" ]]; then
+    echo "seed_matrix.py not found at ${SEED_MATRIX_PY}" >&2
+    echo "Fix --uvkin-dir / --arc-base, or run from a checkout where UVKIN_DIR points at the repo." >&2
+    exit 2
+fi
+
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-MATRIX_ROOT="${RESULTS_BASE}/${KILOGAS_ID}/debug_matrix_runs/${STAMP}"
+MATRIX_ROOT="${RESULTS_BASE}/${KILOGAS_ID}/seed_matrix_runs/${STAMP}"
 
 echo "===================================================="
-echo "uvkin CANFAR debug matrix submission"
+echo "uvkin CANFAR seed matrix submission"
 echo "===================================================="
 echo "KGAS ID      : ${KGAS_ID}"
 echo "KILOGAS ID   : ${KILOGAS_ID}"
 echo "Data         : ${DATA_PATH}"
+echo "UVKIN dir    : ${UVKIN_DIR}"
 echo "Matrix root  : ${MATRIX_ROOT}"
 echo "Max jobs     : ${MAX_JOBS}"
 echo "Truncate     : ${TRUNCATE}"
@@ -149,7 +161,7 @@ if (( DRY_RUN == 0 )); then
 fi
 
 PY_ARGS=(
-    "/Users/thbrown/kilogas/analysis/uvkin/src/debug_matrix.py"
+    "${SEED_MATRIX_PY}"
     --kgas-id "${KGAS_ID}"
     --base-pipeline-settings "${PIPELINE_SETTINGS}"
     --data-path "${DATA_PATH}"
@@ -188,4 +200,6 @@ echo "  ${MATRIX_ROOT}/submit_catalog.csv"
 echo "  ${MATRIX_ROOT}/submit.log"
 echo "  ${MATRIX_ROOT}/matrix_summary.json"
 echo ""
-echo "Use aggregate_debug_matrix.py later to roll up run outcomes."
+echo "Per-job outputs: \${RESULTS_BASE}/\${KILOGAS_ID}/seed_matrix/<job_tag>/"
+echo ""
+echo "Use scripts/aggregate_seed_matrix.py later to roll up run outcomes."

@@ -102,12 +102,12 @@ def main(argv: list[str] | None = None) -> int:
         rs_lo = 0.8 * rscale.r_scale_arcsec
         rs_hi = 1.2 * rscale.r_scale_arcsec
         print(
-            "submit_debug_matrix.sh "
+            "submit_seed_matrix.sh "
             f"--kgas-id {args.kgas_id} "
             f"--r-scale-grid {rs_lo:.3f},{rscale.r_scale_arcsec:.3f},{rs_hi:.3f}"
         )
     print(
-        "submit_debug_matrix.sh "
+        "submit_seed_matrix.sh "
         f"--kgas-id {args.kgas_id} "
         f"--pa-init-grid {geom.kinms_pa_deg:.3f},{(geom.kinms_pa_deg + 180.0) % 360.0:.3f}"
     )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate uvkin debug-matrix run outcomes from a manifest."""
+"""Aggregate uvkin seed-matrix run outcomes from a manifest."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def aggregate(matrix_root: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Aggregate uvkin debug matrix results")
+    p = argparse.ArgumentParser(description="Aggregate uvkin seed matrix results")
     p.add_argument("--matrix-root", required=True)
     args = p.parse_args(argv)
 

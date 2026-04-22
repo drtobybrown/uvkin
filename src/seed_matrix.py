@@ -1,8 +1,8 @@
-"""Debug-matrix builder and CANFAR submit helper for uvkin.
+"""Seed-matrix builder and CANFAR submit helper for uvkin.
 
-This module generates deterministic parameter sweeps for convergence forensics,
-materializes per-job pipeline YAML files, writes manifests, and optionally
-submits jobs to CANFAR in submit-only mode.
+This module generates deterministic parameter sweeps for prior/initialization
+forensics, materializes per-job pipeline YAML files, writes manifests, and
+optionally submits jobs to CANFAR in submit-only mode.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import yaml
 
 @dataclass(frozen=True)
 class MatrixAxes:
-    """Parameter axes for debug-matrix expansion."""
+    """Parameter axes for seed-matrix expansion."""
 
     pa_init_deg: tuple[float, ...]
     r_scale_arcsec: tuple[float, ...]
@@ -196,7 +196,7 @@ def materialize_job_settings(
 def enrich_job_records(cfg: SubmitConfig, jobs: list[dict[str, Any]]) -> None:
     """Attach path, name, and command metadata needed for submission."""
     for job in jobs:
-        outdir = cfg.results_base / cfg.kgas_id / "debug_matrix" / job["job_tag"]
+        outdir = cfg.results_base / cfg.kgas_id / "seed_matrix" / job["job_tag"]
         canfar_name = f"{cfg.kgas_id.lower()}-{job['job_index']:03d}"
         job["kgas_id"] = cfg.kgas_id
         run_cmd = [
@@ -346,7 +346,7 @@ def submit_jobs(
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Build and submit uvkin debug matrix")
+    p = argparse.ArgumentParser(description="Build and submit uvkin seed matrix")
     p.add_argument("--kgas-id", required=True)
     p.add_argument("--base-pipeline-settings", required=True)
     p.add_argument("--data-path", required=True)

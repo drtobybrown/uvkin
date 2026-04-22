@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from debug_matrix import MatrixAxes, cap_jobs, expand_jobs, materialize_job_settings
+from seed_matrix import MatrixAxes, cap_jobs, expand_jobs, materialize_job_settings
 
 
 def test_expand_jobs_deterministic_order():

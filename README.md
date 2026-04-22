@@ -72,19 +72,19 @@ bash submit_kgas.sh --dry  # preview without submitting
 Edit `submit_kgas.sh` to set your container image, CANFAR project paths,
 and the list of `KILOGAS*` IDs to process (catalog and aggregation, including spectral binning, come from `uvkin_settings.yaml`).
 
-### Convergence debug matrix (CANFAR, submit-only)
+### Seed matrix (CANFAR, submit-only)
 
 Use this when a galaxy stalls at prior walls or fails to converge.
 
 ```bash
 # Submit default KGAS66 matrix (72 jobs by default)
-bash scripts/submit_debug_matrix.sh --kgas-id KGAS066
+bash scripts/submit_seed_matrix.sh --kgas-id KGAS066
 
 # Preview only (no submission)
-bash scripts/submit_debug_matrix.sh --kgas-id KGAS066 --dry-run
+bash scripts/submit_seed_matrix.sh --kgas-id KGAS066 --dry-run
 
 # Override sweep axes and cap behaviour
-bash scripts/submit_debug_matrix.sh \
+bash scripts/submit_seed_matrix.sh \
   --kgas-id KGAS066 \
   --max-jobs 80 \
   --truncate \
@@ -99,25 +99,27 @@ bash scripts/submit_debug_matrix.sh \
   --uv-bin-grid "true,false"
 ```
 
-Default debug matrix behavior now includes:
+Default seed matrix behavior now includes:
 
 - `pa_half_width_deg` sweep including `180` (tests `PA ±180` search box)
 - `inc_half_width_deg=90` (physical clamp to `inc ∈ [0, 90]`)
 - `r_scale` inherited from base YAML unless `--r-scale-grid` is set (units: arcsec)
 - `max_steps=20000` in matrix submissions
 
+**Where to set ARC / CANFAR paths:** `scripts/submit_seed_matrix.sh` reads `ARC_BASE` (default `/arc/projects/KILOGAS/analysis/toby_sandbox`) and derives `VIS_DIR`, `RESULTS_BASE`, and `UVKIN_DIR` from it. Override with `--arc-base`, or set `RESULTS_BASE` / `UVKIN_DIR` independently via `--results-base` and `--uvkin-dir`. Visibility path defaults to `${VIS_DIR}/KILOGAS###.npz` unless you pass `--data-path`. Edit `IMAGE` and `CONDA_ENV` near the top of the script for your Skaha container and conda env name.
+
 Each matrix run writes to:
 
-- `.../results/KILOGAS###/debug_matrix_runs/<UTCSTAMP>/matrix_manifest.csv`
-- `.../results/KILOGAS###/debug_matrix_runs/<UTCSTAMP>/submit_catalog.csv`
-- `.../results/KILOGAS###/debug_matrix_runs/<UTCSTAMP>/submit.log`
-- `.../results/KILOGAS###/debug_matrix_runs/<UTCSTAMP>/matrix_summary.json`
+- `.../results/KILOGAS###/seed_matrix_runs/<UTCSTAMP>/matrix_manifest.csv`
+- `.../results/KILOGAS###/seed_matrix_runs/<UTCSTAMP>/submit_catalog.csv`
+- `.../results/KILOGAS###/seed_matrix_runs/<UTCSTAMP>/submit.log`
+- `.../results/KILOGAS###/seed_matrix_runs/<UTCSTAMP>/matrix_summary.json`
 
 Aggregate outcomes after jobs finish:
 
 ```bash
-python scripts/aggregate_debug_matrix.py \
-  --matrix-root /arc/projects/KILOGAS/analysis/toby_sandbox/results/KILOGAS066/debug_matrix_runs/<UTCSTAMP>
+python scripts/aggregate_seed_matrix.py \
+  --matrix-root /arc/projects/KILOGAS/analysis/toby_sandbox/results/KILOGAS066/seed_matrix_runs/<UTCSTAMP>
 ```
 
 ### View results
@@ -153,8 +155,8 @@ The script prints:
 
 - YAML-ready values for `galaxies.<KGAS_ID>` (`pa_init`, `inc_init`, `vsys`, `flux_int_jy_kms`, `r_scale`)
 - `run_kgas_full.py` flags for line-mask setup (`--vsys`, `--line-width-kms`)
-- `run_kgas_full.py --r-scale ...` and `submit_debug_matrix.sh --r-scale-grid ...` hints
-- a recommended `submit_debug_matrix.sh --pa-init-grid ...` seed pair (PA and PA+180)
+- `run_kgas_full.py --r-scale ...` and `submit_seed_matrix.sh --r-scale-grid ...` hints
+- a recommended `submit_seed_matrix.sh --pa-init-grid ...` seed pair (PA and PA+180)
 
 `r_scale` is emitted in **arcsec**, estimated from the moment-0 half-light radius
 (`r50`) with an exponential-disk conversion `r_scale = r50 / 1.678`.
