@@ -20,9 +20,10 @@ DRY_RUN=0
 
 # Optional axis overrides (comma-separated).
 PA_INIT_GRID="154.8,166.2,334.8"
-PA_HALF_WIDTH_GRID="50,120"
+PA_HALF_WIDTH_GRID="50,120,180"
+INC_HALF_WIDTH_GRID="90"
 LINE_WIDTH_GRID="500,700"
-SPECTRAL_BIN_GRID="1,2,4"
+SPECTRAL_BIN_GRID="1,4"
 UV_BIN_GRID="true,false"
 
 # Shared CANFAR configuration.
@@ -31,7 +32,7 @@ CONDA_ENV="uvkin"
 N_WALKERS=32
 N_PROCESSES=16
 CHECK_INTERVAL=500
-MAX_STEPS=10000
+MAX_STEPS=20000
 
 ARC_BASE="${ARC_BASE:-/arc/projects/KILOGAS/analysis/toby_sandbox}"
 VIS_DIR="${ARC_BASE}/visibilities"
@@ -60,9 +61,10 @@ Optional:
 
 Axis overrides (comma-separated):
   --pa-init-grid CSV            default: 154.8,166.2,334.8
-  --pa-half-width-grid CSV      default: 50,120
+  --pa-half-width-grid CSV      default: 50,120,180
+  --inc-half-width-grid CSV     default: 90 (=> inclination bounds clamp to [0,90])
   --line-width-grid CSV         default: 500,700
-  --spectral-bin-grid CSV       default: 1,2,4
+  --spectral-bin-grid CSV       default: 1,4
   --uv-bin-grid CSV             default: true,false
 EOF
     exit 2
@@ -95,6 +97,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --pa-init-grid) PA_INIT_GRID="$2"; shift 2 ;;
         --pa-half-width-grid) PA_HALF_WIDTH_GRID="$2"; shift 2 ;;
+        --inc-half-width-grid) INC_HALF_WIDTH_GRID="$2"; shift 2 ;;
         --line-width-grid) LINE_WIDTH_GRID="$2"; shift 2 ;;
         --spectral-bin-grid) SPECTRAL_BIN_GRID="$2"; shift 2 ;;
         --uv-bin-grid) UV_BIN_GRID="$2"; shift 2 ;;
@@ -160,6 +163,7 @@ PY_ARGS=(
     --max-jobs "${MAX_JOBS}"
     --pa-init-grid "${PA_INIT_GRID}"
     --pa-half-width-grid "${PA_HALF_WIDTH_GRID}"
+    --inc-half-width-grid "${INC_HALF_WIDTH_GRID}"
     --line-width-grid "${LINE_WIDTH_GRID}"
     --spectral-bin-grid "${SPECTRAL_BIN_GRID}"
     --uv-bin-grid "${UV_BIN_GRID}"

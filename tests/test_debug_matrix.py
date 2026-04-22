@@ -12,6 +12,7 @@ def test_expand_jobs_deterministic_order():
     axes = MatrixAxes(
         pa_init_deg=(10.0, 20.0),
         pa_half_width_deg=(30.0,),
+        inc_half_width_deg=(90.0,),
         line_width_kms=(400.0, 500.0),
         spectral_bin_factor=(1,),
         apply_uv_binning=(True, False),
@@ -89,6 +90,7 @@ def test_materialize_job_settings_writes_expected_overrides(tmp_path: Path):
             "job_tag": "caseA",
             "pa_init_deg": 330.0,
             "pa_half_width_deg": 120.0,
+            "inc_half_width_deg": 90.0,
             "spectral_bin_factor": 1,
             "apply_uv_binning": False,
             "line_width_kms": 700.0,
@@ -106,5 +108,6 @@ def test_materialize_job_settings_writes_expected_overrides(tmp_path: Path):
     rendered = yaml.safe_load(out_path.read_text(encoding="utf-8"))
     assert rendered["galaxies"]["KGAS066"]["pa_init"] == pytest.approx(330.0)
     assert rendered["mcmc_bounds"]["pa_half_width_deg"] == pytest.approx(120.0)
+    assert rendered["mcmc_bounds"]["inc_half_width_deg"] == pytest.approx(90.0)
     assert rendered["aggregation"]["spectral_bin_factor"] == 1
     assert rendered["aggregation"]["apply_uv_binning"] is False

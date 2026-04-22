@@ -26,6 +26,7 @@ class MatrixAxes:
 
     pa_init_deg: tuple[float, ...]
     pa_half_width_deg: tuple[float, ...]
+    inc_half_width_deg: tuple[float, ...]
     line_width_kms: tuple[float, ...]
     spectral_bin_factor: tuple[int, ...]
     apply_uv_binning: tuple[bool, ...]
@@ -91,12 +92,14 @@ def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _default_axes() -> MatrixAxes:
-    # 3 * 2 * 2 * 3 * 2 = 72 jobs (<=100 default cap).
+    # 3 * 3 * 1 * 2 * 2 * 2 = 72 jobs (<=100 default cap).
     return MatrixAxes(
         pa_init_deg=(154.8, 166.2, 334.8),
-        pa_half_width_deg=(50.0, 120.0),
+        pa_half_width_deg=(50.0, 120.0, 180.0),
+        # 90 deg half-width clamps to physical [0, 90] inclination in bounds builder.
+        inc_half_width_deg=(90.0,),
         line_width_kms=(500.0, 700.0),
-        spectral_bin_factor=(1, 2, 4),
+        spectral_bin_factor=(1, 4),
         apply_uv_binning=(True, False),
     )
 
@@ -108,18 +111,20 @@ def expand_jobs(axes: MatrixAxes) -> list[dict[str, Any]]:
         itertools.product(
             axes.pa_init_deg,
             axes.pa_half_width_deg,
+            axes.inc_half_width_deg,
             axes.line_width_kms,
             axes.spectral_bin_factor,
             axes.apply_uv_binning,
         ),
         start=1,
     ):
-        pa_init, pa_half, line_width, spectral_bin, uv_bin = vals
+        pa_init, pa_half, inc_half, line_width, spectral_bin, uv_bin = vals
         jobs.append(
             {
                 "job_index": idx,
                 "pa_init_deg": float(pa_init),
                 "pa_half_width_deg": float(pa_half),
+                "inc_half_width_deg": float(inc_half),
                 "line_width_kms": float(line_width),
                 "spectral_bin_factor": int(spectral_bin),
                 "apply_uv_binning": bool(uv_bin),
@@ -172,6 +177,7 @@ def materialize_job_settings(
         payload = json.loads(json.dumps(base))
         payload["galaxies"][kgas_id]["pa_init"] = float(job["pa_init_deg"])
         payload["mcmc_bounds"]["pa_half_width_deg"] = float(job["pa_half_width_deg"])
+        payload["mcmc_bounds"]["inc_half_width_deg"] = float(job["inc_half_width_deg"])
         payload["aggregation"]["spectral_bin_factor"] = int(job["spectral_bin_factor"])
         payload["aggregation"]["apply_uv_binning"] = bool(job["apply_uv_binning"])
         job_settings = settings_outdir / f"{job['job_tag']}.yaml"
@@ -226,6 +232,7 @@ def write_manifest(path: Path, jobs: Iterable[dict[str, Any]]) -> None:
         "kgas_id",
         "pa_init_deg",
         "pa_half_width_deg",
+        "inc_half_width_deg",
         "line_width_kms",
         "spectral_bin_factor",
         "apply_uv_binning",
@@ -341,7 +348,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--n-walkers", type=int, default=32)
     p.add_argument("--n-processes", type=int, default=16)
     p.add_argument("--check-interval", type=int, default=500)
-    p.add_argument("--max-steps", type=int, default=10000)
+    p.add_argument("--max-steps", type=int, default=20000)
     p.add_argument("--run-uvkin-script", required=True)
     p.add_argument("--run-kgas-script", required=True)
     p.add_argument("--max-jobs", type=int, default=100)
@@ -349,9 +356,10 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     # Axis overrides (comma-separated).
     p.add_argument("--pa-init-grid", default="154.8,166.2,334.8")
-    p.add_argument("--pa-half-width-grid", default="50,120")
+    p.add_argument("--pa-half-width-grid", default="50,120,180")
+    p.add_argument("--inc-half-width-grid", default="90")
     p.add_argument("--line-width-grid", default="500,700")
-    p.add_argument("--spectral-bin-grid", default="1,2,4")
+    p.add_argument("--spectral-bin-grid", default="1,4")
     p.add_argument("--uv-bin-grid", default="true,false")
     return p
 
@@ -413,6 +421,8 @@ def main(argv: list[str] | None = None) -> int:
         pa_init_deg=_parse_csv_floats(args.pa_init_grid) or axes.pa_init_deg,
         pa_half_width_deg=_parse_csv_floats(args.pa_half_width_grid)
         or axes.pa_half_width_deg,
+        inc_half_width_deg=_parse_csv_floats(args.inc_half_width_grid)
+        or axes.inc_half_width_deg,
         line_width_kms=_parse_csv_floats(args.line_width_grid) or axes.line_width_kms,
         spectral_bin_factor=_parse_csv_ints(args.spectral_bin_grid)
         or axes.spectral_bin_factor,

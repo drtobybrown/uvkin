@@ -92,9 +92,17 @@ bash scripts/submit_debug_matrix.sh \
   --results-base /arc/projects/KILOGAS/analysis/toby_sandbox/results \
   --uvkin-dir /arc/projects/KILOGAS/analysis/toby_sandbox/uvkin \
   --pa-init-grid "154.8,166.2,334.8" \
-  --spectral-bin-grid "1,2,4" \
+  --pa-half-width-grid "50,120,180" \
+  --inc-half-width-grid "90" \
+  --spectral-bin-grid "1,4" \
   --uv-bin-grid "true,false"
 ```
+
+Default debug matrix behavior now includes:
+
+- `pa_half_width_deg` sweep including `180` (tests `PA ±180` search box)
+- `inc_half_width_deg=90` (physical clamp to `inc ∈ [0, 90]`)
+- `max_steps=20000` in matrix submissions
 
 Each matrix run writes to:
 
