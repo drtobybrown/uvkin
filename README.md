@@ -72,6 +72,44 @@ bash submit_kgas.sh --dry  # preview without submitting
 Edit `submit_kgas.sh` to set your container image, CANFAR project paths,
 and the list of `KILOGAS*` IDs to process (catalog and aggregation, including spectral binning, come from `uvkin_settings.yaml`).
 
+### Convergence debug matrix (CANFAR, submit-only)
+
+Use this when a galaxy stalls at prior walls or fails to converge.
+
+```bash
+# Submit default KGAS66 matrix (72 jobs by default)
+bash scripts/submit_debug_matrix.sh --kgas-id KGAS066
+
+# Preview only (no submission)
+bash scripts/submit_debug_matrix.sh --kgas-id KGAS066 --dry-run
+
+# Override sweep axes and cap behaviour
+bash scripts/submit_debug_matrix.sh \
+  --kgas-id KGAS066 \
+  --max-jobs 80 \
+  --truncate \
+  --data-path /path/to/KILOGAS066.npz \
+  --results-base /arc/projects/KILOGAS/analysis/toby_sandbox/results \
+  --uvkin-dir /arc/projects/KILOGAS/analysis/toby_sandbox/uvkin \
+  --pa-init-grid "154.8,166.2,334.8" \
+  --spectral-bin-grid "1,2,4" \
+  --uv-bin-grid "true,false"
+```
+
+Each matrix run writes to:
+
+- `.../results/KILOGAS###/debug_matrix_runs/<UTCSTAMP>/matrix_manifest.csv`
+- `.../results/KILOGAS###/debug_matrix_runs/<UTCSTAMP>/submit_catalog.csv`
+- `.../results/KILOGAS###/debug_matrix_runs/<UTCSTAMP>/submit.log`
+- `.../results/KILOGAS###/debug_matrix_runs/<UTCSTAMP>/matrix_summary.json`
+
+Aggregate outcomes after jobs finish:
+
+```bash
+python scripts/aggregate_debug_matrix.py \
+  --matrix-root /arc/projects/KILOGAS/analysis/toby_sandbox/results/KILOGAS066/debug_matrix_runs/<UTCSTAMP>
+```
+
 ### View results
 
 ```bash
@@ -87,3 +125,22 @@ Results are saved per galaxy to `{outdir}/`:
 | `result.npz` | MAP params, chi2, MCMC chains, autocorrelation time |
 | `bestfit_cube.fits` | Best-fit model cube (3D FITS + WCS; load with spectral-cube) |
 | `run.log` | Full runtime log |
+
+## Prior seeding from imaging products
+
+Estimate KinMS-compatible priors from a moment-1 FITS map and a line spectrum CSV:
+
+```bash
+python scripts/seed_priors_from_products.py \
+  --kgas-id KGAS066 \
+  --moment1-fits /path/to/KGAS66_mom1.fits \
+  --moment0-fits /path/to/KGAS66_Ico_K_kms-1.fits \
+  --spectrum-csv /path/to/KGAS66_spectrum.csv \
+  --out-json /tmp/kgas66_seed_priors.json
+```
+
+The script prints:
+
+- YAML-ready values for `galaxies.<KGAS_ID>` (`pa_init`, `inc_init`, `vsys`, `flux_int_jy_kms`)
+- `run_kgas_full.py` flags for line-mask setup (`--vsys`, `--line-width-kms`)
+- a recommended `submit_debug_matrix.sh --pa-init-grid ...` seed pair (PA and PA+180)
