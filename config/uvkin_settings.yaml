@@ -16,12 +16,8 @@ shared:
 # Galaxy catalog (values from kilogas/analysis/catalogues/kgas007_066_catalogue.csv
 # unless otherwise noted).
 #
-# KinMS `posAng` convention: angle from North through E-of-N direction?  No.
-# KinMS measures `posAng` CLOCKWISE from North (0=N, 90=W, 180=S, 270=E) and
-# points to the REDSHIFTED (receding) major-axis tip. `pa_init` below is set
-# from the redshifted-side knowledge rather than the raw catalogue `PA`
-# column (which is photometric only): KGAS066 red side SSW -> pa_init=166.2;
-# KGAS007 red side SSE -> pa_init=212.6. See kinms.posAng documentation.
+# `pa_init` is stored as the RECEDING-side major-axis PA in standard
+# East-of-North orientation (not just a photometric major-axis angle).
 #
 # `ra_deg`, `dec_deg` are the catalogue ICRS coordinates (NSA/MGE), used by
 # run_kgas_full to cross-check the MS PHASE_DIR stored in the .npz and warn

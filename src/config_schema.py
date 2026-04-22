@@ -11,9 +11,8 @@ class GalaxyConfig:
     """
     Per-galaxy catalog entry (notebook + batch runs).
 
-    ``pa_init`` feeds KinMS ``posAng`` through uvfit. KinMS defines disc PA so that
-    **PA = 0° places the redshifted (receding) side toward +y** in the model frame
-    (see KinMS ``kinms_create_velField_oneSided`` / ``posAng`` documentation). Many
+    ``pa_init`` feeds KinMS ``posAng`` through uvfit and is treated as the
+    receding-side major-axis PA in the usual East-of-North convention. Many
     catalogs quote only the East-of-North angle of the **major axis** without stating
     which end is receding; the kinematic seed can then differ by **180°**.
     """

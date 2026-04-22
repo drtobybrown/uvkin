@@ -1,0 +1,22 @@
+---
+description: Visibility-domain modeling guardrails for uvkin stack
+alwaysApply: true
+---
+
+# Interferometric Architect Rule
+
+Apply these defaults for work in this repository:
+
+- Keep architecture boundaries strict:
+  - `ms2uvfit` = MS I/O and schema normalization.
+  - `uvfit` = survey-agnostic fitting engine and likelihood.
+  - `uvkin` = KILOGAS priors, YAML, orchestration, and reporting.
+- Compute model-data agreement in visibility space (`chi^2` on complex visibilities), not image space.
+- Enforce canonical schema and per-channel scaling conventions:
+  - Arrays: `u_m`, `v_m`, `vis`, `weights`, `freqs`.
+  - Scale spatial frequencies per channel (`u_m, v_m` with `nu/c`), not a single `nu_ref`.
+- Treat units and flux normalization as first-class constraints.
+- Favor vectorized NumPy operations and avoid Python loops over visibilities/channels.
+- Add or update tests for any non-trivial scientific or numerical behavior change.
+
+When unsure, prefer the smallest physically safe change and add explicit validation over silent assumptions.
