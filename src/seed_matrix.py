@@ -95,15 +95,15 @@ def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _default_axes() -> MatrixAxes:
-    # 3 * 3 * 1 * 2 * 2 * 2 = 72 jobs (<=100 default cap).
+    # 3 * 1 * 1 * 2 * 1 * 2 = 12 jobs (<=100 default cap).
     return MatrixAxes(
         pa_init_deg=(154.8, 166.2, 334.8),
         r_scale_arcsec=(7.0,),
-        pa_half_width_deg=(50.0, 120.0, 180.0),
+        pa_half_width_deg=(180.0,),
         # 90 deg half-width clamps to physical [0, 90] inclination in bounds builder.
         inc_half_width_deg=(90.0,),
         line_width_kms=(500.0, 700.0),
-        spectral_bin_factor=(1, 4),
+        spectral_bin_factor=(8,),
         apply_uv_binning=(True, False),
     )
 
@@ -366,10 +366,10 @@ def _parser() -> argparse.ArgumentParser:
     # Axis overrides (comma-separated).
     p.add_argument("--pa-init-grid", default="154.8,166.2,334.8")
     p.add_argument("--r-scale-grid", default="")
-    p.add_argument("--pa-half-width-grid", default="50,120,180")
+    p.add_argument("--pa-half-width-grid", default="180")
     p.add_argument("--inc-half-width-grid", default="90")
     p.add_argument("--line-width-grid", default="500,700")
-    p.add_argument("--spectral-bin-grid", default="1,4")
+    p.add_argument("--spectral-bin-grid", default="8")
     p.add_argument("--uv-bin-grid", default="true,false")
     return p
 

@@ -21,10 +21,10 @@ DRY_RUN=0
 # Optional axis overrides (comma-separated).
 PA_INIT_GRID="154.8,166.2,334.8"
 R_SCALE_GRID=""
-PA_HALF_WIDTH_GRID="50,120,180"
+PA_HALF_WIDTH_GRID="180"
 INC_HALF_WIDTH_GRID="90"
 LINE_WIDTH_GRID="500,700"
-SPECTRAL_BIN_GRID="1,4"
+SPECTRAL_BIN_GRID="8"
 UV_BIN_GRID="true,false"
 
 # Shared CANFAR configuration.
@@ -63,10 +63,10 @@ Optional:
 Axis overrides (comma-separated):
   --pa-init-grid CSV            default: 154.8,166.2,334.8
   --r-scale-grid CSV            default: base YAML r_scale (arcsec)
-  --pa-half-width-grid CSV      default: 50,120,180
+  --pa-half-width-grid CSV      default: 180
   --inc-half-width-grid CSV     default: 90 (=> inclination bounds clamp to [0,90])
   --line-width-grid CSV         default: 500,700
-  --spectral-bin-grid CSV       default: 1,4
+  --spectral-bin-grid CSV       default: 8
   --uv-bin-grid CSV             default: true,false
 
 Paths (CANFAR / shared ARC):

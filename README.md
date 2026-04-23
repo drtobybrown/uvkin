@@ -30,16 +30,14 @@ jupyter notebook kgas_cusp_vs_core.ipynb
 ```
 
 Runs on the downsampled data (`KILOGAS007.small.npz`) with reduced MCMC
-parameters for quick iteration. Spectral trim and line/off-line masks follow
-`obs_freq_range_ghz` in `kgas_config.py` (plus `vel_buffer_kms`), matching
-`run_kgas_full.py` when `--kgas-id` is set. Without `--kgas-id`, the script
-uses `VSYS ± VMAX ± vel_buffer` for trim and `VSYS ± line_width/2` for the line
-mask (default line width `2×--vmax`).
+parameters for quick iteration. Spectral trim uses
+`VSYS ± line_width/2 ± vel_buffer` and diagnostics line/off-line masks use
+`VSYS ± line_width/2` (default `line_width = 2×vmax`).
 
 ### Production run (local)
 
 ```bash
-# Fixed-step run (vsys, r_scale from kgas_config; vmax from obs band vs vsys when --kgas-id is set)
+# Fixed-step run (vsys/r_scale/vmax from catalog or seeded per-galaxy fields)
 python run_kgas_full.py \
   --data /path/to/KILOGAS007.npz \
   --outdir ./results/KILOGAS007 \
@@ -58,7 +56,7 @@ python run_kgas_full.py \
 
 # Spectral channel averaging: set aggregation.spectral_bin_factor in uvkin_settings.yaml (or --pipeline-settings).
 # Optional overrides: --vsys, --vmax, --r-scale (defaults are catalog values with --kgas-id)
-# Optional line mask width (km/s); default is 2×vmax when not using obs-band masks
+# Optional line mask width (km/s); default is 2×vmax
 python run_kgas_full.py --data ... --outdir ... --kgas-id KGAS007 --line-width-kms 400
 ```
 
@@ -77,7 +75,7 @@ and the list of `KILOGAS*` IDs to process (catalog and aggregation, including sp
 Use this when a galaxy stalls at prior walls or fails to converge.
 
 ```bash
-# Submit default KGAS66 matrix (72 jobs by default)
+# Submit default KGAS66 matrix (12 jobs by default)
 bash scripts/submit_seed_matrix.sh --kgas-id KGAS066
 
 # Preview only (no submission)
@@ -93,16 +91,17 @@ bash scripts/submit_seed_matrix.sh \
   --uvkin-dir /arc/projects/KILOGAS/analysis/toby_sandbox/uvkin \
   --pa-init-grid "154.8,166.2,334.8" \
   --r-scale-grid "5.5,7.0,8.5" \
-  --pa-half-width-grid "50,120,180" \
+  --pa-half-width-grid "180" \
   --inc-half-width-grid "90" \
-  --spectral-bin-grid "1,4" \
+  --spectral-bin-grid "8" \
   --uv-bin-grid "true,false"
 ```
 
 Default seed matrix behavior now includes:
 
-- `pa_half_width_deg` sweep including `180` (tests `PA ±180` search box)
+- `pa_half_width_deg=180` (full 360° PA search around `pa_init`)
 - `inc_half_width_deg=90` (physical clamp to `inc ∈ [0, 90]`)
+- `spectral_bin_factor=8` by default (~10.16 km/s on KGAS066)
 - `r_scale` inherited from base YAML unless `--r-scale-grid` is set (units: arcsec)
 - `max_steps=20000` in matrix submissions
 
@@ -153,8 +152,8 @@ python scripts/seed_priors_from_products.py \
 
 The script prints:
 
-- YAML-ready values for `galaxies.<KGAS_ID>` (`pa_init`, `inc_init`, `vsys`, `flux_int_jy_kms`, `r_scale`)
-- `run_kgas_full.py` flags for line-mask setup (`--vsys`, `--line-width-kms`)
+- YAML-ready values for `galaxies.<KGAS_ID>` (`pa_init`, `inc_init`, `vsys`, `vmax_seed_kms`, `vel_buffer_kms`, `flux_int_jy_kms`, `r_scale`)
+- `run_kgas_full.py` flags for kinematic setup (`--vmax`, `--vsys`, `--line-width-kms`)
 - `run_kgas_full.py --r-scale ...` and `submit_seed_matrix.sh --r-scale-grid ...` hints
 - a recommended `submit_seed_matrix.sh --pa-init-grid ...` seed pair (PA and PA+180)
 

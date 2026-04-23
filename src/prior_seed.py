@@ -35,6 +35,16 @@ class RScalePrior:
     r_scale_arcsec: float
 
 
+@dataclass(frozen=True)
+class KinematicWindowPrior:
+    vsys_ref_kms: float
+    vmax_seed_kms: float
+    line_half_width_kms: float
+    vel_buffer_kms: float
+    line_vel_lo_kms: float
+    line_vel_hi_kms: float
+
+
 def _weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
     order = np.argsort(values)
     v = values[order]
@@ -249,3 +259,57 @@ def estimate_r_scale_prior(
     r50 = _weighted_quantile(rr, w_f, 0.5)
     r_scale = float(max(r50 / 1.678, 1e-6))
     return RScalePrior(r50_arcsec=float(r50), r_scale_arcsec=r_scale)
+
+
+def estimate_kinematic_window_prior(
+    *,
+    moment1: np.ndarray,
+    moment0: np.ndarray | None = None,
+    vsys_kms: float | None = None,
+    vmax_q: float = 0.95,
+    edge_q: float = 0.995,
+    buffer_fraction: float = 0.25,
+    buffer_floor_kms: float = 20.0,
+    buffer_cap_kms: float = 200.0,
+) -> KinematicWindowPrior:
+    """Estimate vmax and velocity buffer from moment1.
+
+    The estimator is robust to outliers by using weighted quantiles of
+    ``|v - vsys|`` across valid moment1 pixels.
+    """
+    m1 = np.asarray(moment1, dtype=np.float64)
+    finite = np.isfinite(m1)
+    if moment0 is not None:
+        w = np.asarray(moment0, dtype=np.float64)
+        finite &= np.isfinite(w)
+        weights = np.where(finite, np.clip(w, 0.0, None), 0.0)
+    else:
+        weights = np.where(finite, 1.0, 0.0)
+
+    if np.sum(weights > 0) < 16:
+        raise ValueError("Insufficient finite/positive pixels in moment map(s)")
+    v = m1[weights > 0]
+    w = weights[weights > 0]
+
+    if vsys_kms is None:
+        vsys_ref = _weighted_median(v, w)
+    else:
+        vsys_ref = float(vsys_kms)
+    dv_abs = np.abs(v - vsys_ref)
+
+    vmax_seed = max(_weighted_quantile(dv_abs, w, vmax_q), 1.0)
+    line_half = max(_weighted_quantile(dv_abs, w, edge_q), vmax_seed)
+    line_lo = vsys_ref - line_half
+    line_hi = vsys_ref + line_half
+
+    buf_raw = buffer_fraction * (2.0 * line_half)
+    vel_buffer = float(np.clip(buf_raw, buffer_floor_kms, buffer_cap_kms))
+
+    return KinematicWindowPrior(
+        vsys_ref_kms=float(vsys_ref),
+        vmax_seed_kms=float(vmax_seed),
+        line_half_width_kms=float(line_half),
+        vel_buffer_kms=vel_buffer,
+        line_vel_lo_kms=float(line_lo),
+        line_vel_hi_kms=float(line_hi),
+    )

@@ -56,7 +56,7 @@ parser.add_argument("--max-steps", type=int, default=10000,
 # Galaxy-specific physical parameters (defaults from kgas_config --kgas-id entry)
 parser.add_argument(
     "--vmax", type=float, default=None,
-    help="Peak circular velocity (km/s), held fixed. Default: from obs band vs vsys.",
+    help="Peak circular velocity (km/s), held fixed. Default: vmax_seed_kms in galaxy config, else obs-band fallback.",
 )
 parser.add_argument(
     "--r-scale", type=float, default=None,
@@ -82,7 +82,8 @@ parser.add_argument(
     metavar="ID",
     help=(
         "Catalog key (e.g. KGAS007): pa/inc/vsys/r_scale and obs_freq_range_ghz from kgas_config; "
-        "vmax defaults from that band vs vsys. Omit --vsys/--vmax/--r-scale to use catalog/band defaults."
+        "vmax defaults from vmax_seed_kms (if set) else from that band. "
+        "Omit --vsys/--vmax/--r-scale to use config defaults."
     ),
 )
 parser.add_argument(
@@ -122,9 +123,18 @@ VSYS = args.vsys if args.vsys is not None else _cfg.vsys
 VMAX = (
     args.vmax
     if args.vmax is not None
-    else vmax_circ_from_obs_band(_cfg.obs_freq_range_ghz, VSYS, shared=PIPE.shared)
+    else (
+        float(_cfg.vmax_seed_kms)
+        if _cfg.vmax_seed_kms is not None
+        else vmax_circ_from_obs_band(_cfg.obs_freq_range_ghz, VSYS, shared=PIPE.shared)
+    )
 )
 R_SCALE = args.r_scale if args.r_scale is not None else _cfg.r_scale
+VEL_BUFFER_EFFECTIVE = (
+    float(_cfg.vel_buffer_kms)
+    if _cfg.vel_buffer_kms is not None
+    else float(VEL_BUFFER)
+)
 
 LINE_WIDTH_KMS = (
     float(args.line_width_kms)
@@ -156,6 +166,7 @@ from astropy.wcs import WCS
 
 from empirical_bounds import BoundedGNFWKinMSModel
 from fit_bounds import get_empirical_bounds
+from spectral_windows import build_velocity_windows, compute_line_channel_mask
 from uv_aggregate import (
     average_time_steps,
     bin_uv_plane,
@@ -230,33 +241,6 @@ def bin_channels(vis, weights, vel, freqs, bin_factor):
     return vis_b, weights_b, vel_b, freqs_b, n_drop
 
 
-def compute_line_channel_mask(
-    vel_trim: np.ndarray,
-    *,
-    cfg,
-    vsys: float,
-    line_width_kms: float,
-    v_lo_band: float,
-    v_hi_band: float,
-) -> np.ndarray:
-    """Boolean mask over spectral channels: True = line (diagnostics only).
-
-    Uses the catalog obs band in velocity space, with an 80% trim-span
-    fallback if either the line or the off-line subset ends up empty
-    (happens when the obs band stretches past the spectral trim edge).
-    """
-    del cfg, vsys, line_width_kms  # legacy args retained for caller compat
-    line_chan = (vel_trim >= v_lo_band) & (vel_trim <= v_hi_band)
-    n_line = int(line_chan.sum())
-    n_off = int(np.sum(~line_chan))
-    if n_line == 0 or n_off == 0:
-        v0, v1 = float(vel_trim.min()), float(vel_trim.max())
-        span = v1 - v0
-        mid = 0.5 * (v0 + v1)
-        line_chan = (vel_trim >= mid - 0.4 * span) & (vel_trim <= mid + 0.4 * span)
-    return line_chan
-
-
 def write_bestfit_cube_fits(
     path,
     cube_vyx,
@@ -329,7 +313,7 @@ log.info("kgas_config reference:")
 for _line in format_config_log(args.kgas_id, pipeline=PIPE).splitlines():
     log.info("  %s", _line)
 log.info(
-    "Using catalog vsys/r_scale and vmax from obs band vs vsys unless overridden on the CLI."
+    "Using catalog/seeded vsys/r_scale/vmax unless overridden on the CLI."
 )
 log.info(
     "Effective run: vsys=%.1f vmax=%.1f r_scale=%.1f pa_init=%.1f inc_init=%.1f "
@@ -349,6 +333,12 @@ log.info(
     AGGREGATION.spectral_bin_factor,
 )
 log.info("Vmax: %.1f km/s  |  r_scale: %.1f arcsec", VMAX, R_SCALE)
+if _cfg.vmax_seed_kms is not None and args.vmax is None:
+    log.info("Using seeded vmax_seed_kms=%.3f from galaxy settings.", float(_cfg.vmax_seed_kms))
+if _cfg.vel_buffer_kms is not None:
+    log.info("Using per-galaxy vel_buffer_kms override: %.3f km/s", VEL_BUFFER_EFFECTIVE)
+else:
+    log.info("Using shared vel_buffer_kms: %.3f km/s", VEL_BUFFER_EFFECTIVE)
 t0 = time.time()
 d = np.load(args.data)
 if "u_m" not in d.files or "v_m" not in d.files:
@@ -447,15 +437,11 @@ u_m_all, v_m_all, vis_all, weights_all = cast_uv_arrays(
 )
 
 vel_all = C_KMS * (1.0 - freqs_all / F_REST)
-_lo_g, _hi_g = _cfg.obs_freq_range_ghz
-_f_lo_hz = min(_lo_g, _hi_g) * 1e9
-_f_hi_hz = max(_lo_g, _hi_g) * 1e9
-_v_a = C_KMS * (1.0 - _f_lo_hz / F_REST)
-_v_b = C_KMS * (1.0 - _f_hi_hz / F_REST)
-v_lo_band = min(_v_a, _v_b)
-v_hi_band = max(_v_a, _v_b)
-v_lo = v_lo_band - VEL_BUFFER
-v_hi = v_hi_band + VEL_BUFFER
+v_lo_line, v_hi_line, v_lo, v_hi = build_velocity_windows(
+    vsys_kms=VSYS,
+    line_width_kms=LINE_WIDTH_KMS,
+    vel_buffer_kms=VEL_BUFFER_EFFECTIVE,
+)
 chan_mask = (vel_all >= v_lo) & (vel_all <= v_hi)
 
 # ---------------------------------------------------------------------------
@@ -644,17 +630,17 @@ import astropy.units as au
 log.info("=" * 60)
 log.info("PRE-FIT DIAGNOSTICS")
 log.info(
-    "Spectral trim + line mask from kgas_config obs_freq_range_ghz = %s GHz",
-    _cfg.obs_freq_range_ghz,
+    "Spectral trim from vsys/line_width with buffer: vsys=%.3f line_width=%.3f "
+    "buffer=%.3f (km/s)",
+    VSYS,
+    LINE_WIDTH_KMS,
+    VEL_BUFFER_EFFECTIVE,
 )
 
 line_chan = compute_line_channel_mask(
     vel_trim,
-    cfg=_cfg,
-    vsys=VSYS,
+    vsys_kms=VSYS,
     line_width_kms=LINE_WIDTH_KMS,
-    v_lo_band=v_lo_band,
-    v_hi_band=v_hi_band,
 )
 offline_chan = ~line_chan
 n_line = int(line_chan.sum())
@@ -665,8 +651,8 @@ snr2 = np.where(good, (amp_abs ** 2) * uvdata.weights, 0.0)
 mean_amp_chan = np.mean(amp_abs, axis=0)
 log.info(
     "Line mask (diagnostics): %.1f km/s ≤ v ≤ %.1f km/s "
-    "(obs band width=%.1f km/s) — %d ch line, %d ch off-line",
-    v_lo_band, v_hi_band, v_hi_band - v_lo_band, n_line, n_off,
+    "(line width=%.1f km/s) — %d ch line, %d ch off-line",
+    v_lo_line, v_hi_line, LINE_WIDTH_KMS, n_line, n_off,
 )
 
 # A. Incoherent |V|^2 excess power (line vs off-line, unshifted visibilities)
@@ -683,8 +669,8 @@ log.info(
 if excess_power < 1.5:
     log.warning(
         "Excess line vs off-line median power = %.2f (< 1.5) — verify continuum "
-        "subtraction / bandpass and spectral masks (--vsys; obs band from "
-        "kgas_config obs_freq_range_ghz) before trusting MCMC",
+        "subtraction / bandpass and spectral masks (--vsys/--line-width-kms "
+        "and per-galaxy vel_buffer_kms) before trusting MCMC",
         excess_power,
     )
 

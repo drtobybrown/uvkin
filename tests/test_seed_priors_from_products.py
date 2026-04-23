@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from astropy.wcs import WCS
 
 from prior_seed import (
     estimate_geometry_prior,
+    estimate_kinematic_window_prior,
     estimate_r_scale_prior,
     estimate_spectrum_prior,
 )
@@ -76,3 +78,24 @@ def test_estimate_r_scale_prior_returns_arcsec():
     assert np.isclose(r.r50_arcsec, 1.413, atol=0.12)
     assert np.isclose(r.r_scale_arcsec, r.r50_arcsec / 1.678, atol=1e-6)
     assert 0.0 < r.r_scale_arcsec < 10.0
+
+
+def test_estimate_kinematic_window_prior_from_moment1():
+    ny, nx = 120, 120
+    y, x = np.indices((ny, nx))
+    xc = (nx - 1) / 2.0
+    yc = (ny - 1) / 2.0
+    xe = x - xc
+    yn = y - yc
+    pa = np.deg2rad(35.0)
+    u = xe * np.sin(pa) + yn * np.cos(pa)
+    v = xe * np.cos(pa) - yn * np.sin(pa)
+    mom0 = np.exp(-(u**2 / (2 * 20.0**2) + v**2 / (2 * 9.0**2)))
+    mom1 = 8300.0 + 7.5 * u
+
+    kw = estimate_kinematic_window_prior(moment1=mom1, moment0=mom0, vsys_kms=8300.0)
+    assert kw.vsys_ref_kms == pytest.approx(8300.0)
+    assert kw.vmax_seed_kms > 0.0
+    assert kw.line_half_width_kms >= kw.vmax_seed_kms
+    assert kw.line_vel_lo_kms < 8300.0 < kw.line_vel_hi_kms
+    assert 20.0 <= kw.vel_buffer_kms <= 200.0

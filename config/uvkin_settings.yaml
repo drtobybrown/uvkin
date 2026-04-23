@@ -52,6 +52,8 @@ galaxies:
     pa_init: 205.212
     inc_init: 51.690
     vsys: 8299.563
+    vmax_seed_kms: 184.034   # moment1-seeded; used before obs-band fallback
+    vel_buffer_kms: 100.494  # moment1-seeded trim/mask buffer
     flux_int_jy_kms: 160.055473
     # Observed CO(2–1) band in GHz (spectral trim / vmax from obs band when used).
     obs_freq_range_ghz: [224.148, 224.506]
@@ -70,8 +72,8 @@ aggregation:
   apply_uv_binning: true
   apply_time_averaging: true
   
-  # Boost SNR by sqrt(4) = 2x per channel
-  spectral_bin_factor: 4 
+  # Production coarse binning for fast robust first-pass fits (~10 km/s on KGAS066).
+  spectral_bin_factor: 8 
 
 # ---------------------------------------------------------------------------
 # emcee / uvfit priors
@@ -90,7 +92,7 @@ mcmc_bounds:
 
   # inc: half-width 90° → full [0°, 90°] after clamp (prevents inc wall-hugging)
   inc_half_width_deg: 90.0
-  pa_half_width_deg: 50.0   # Allow the gas to settle ±50 deg from stellar PA
+  pa_half_width_deg: 180.0  # Full 360° search around pa_init
 
   # Phase-centre (dx, dy) MCMC box around the seed in aggregation /
   # galaxies.phase_centroid_seed_arcsec. KinMSModel now fits these directly;

@@ -26,6 +26,9 @@ class GalaxyConfig:
     obs_freq_range_ghz: Tuple[float, float]
     flux_int_jy_kms: float
     channel_width_kms: float
+    # Optional moment-map-derived kinematic seeds used by run_kgas_full defaults.
+    vmax_seed_kms: float | None = None
+    vel_buffer_kms: float | None = None
     phase_centroid_seed_arcsec: Tuple[float, float] | None = None
     # Catalogue astrometry (degrees, ICRS). When populated, ``run_kgas_full``
     # compares these to the MS ``PHASE_DIR`` stored in the .npz and warns

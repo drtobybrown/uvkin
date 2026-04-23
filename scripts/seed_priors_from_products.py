@@ -14,6 +14,7 @@ if str(_SRC) not in sys.path:
 
 from prior_seed import (
     estimate_geometry_prior,
+    estimate_kinematic_window_prior,
     estimate_r_scale_prior,
     estimate_spectrum_prior,
     load_moment_fits,
@@ -47,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     rscale = estimate_r_scale_prior(moment0=m0, wcs2d=wcs2d) if m0 is not None else None
     flux_mjy, vel_kms = load_spectrum_csv(Path(args.spectrum_csv))
     spec = estimate_spectrum_prior(flux_mjy=flux_mjy, vel_kms=vel_kms)
+    kwin = estimate_kinematic_window_prior(moment1=m1, moment0=m0, vsys_kms=spec.vsys_kms)
 
     payload = {
         "kgas_id": args.kgas_id,
@@ -65,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
             "line_vel_hi_kms": spec.line_vel_hi_kms,
             "baseline_mjy": spec.baseline_mjy,
         },
+        "kinematic_window": {
+            "vmax_seed_kms": kwin.vmax_seed_kms,
+            "vel_buffer_kms": kwin.vel_buffer_kms,
+            "line_vel_lo_kms": kwin.line_vel_lo_kms,
+            "line_vel_hi_kms": kwin.line_vel_hi_kms,
+        },
     }
     if rscale is not None:
         payload["r_scale"] = {
@@ -82,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  pa_init: {geom.kinms_pa_deg:.3f}")
     print(f"  inc_init: {geom.inc_deg:.3f}")
     print(f"  vsys: {spec.vsys_kms:.3f}")
+    print(f"  vmax_seed_kms: {kwin.vmax_seed_kms:.3f}")
+    print(f"  vel_buffer_kms: {kwin.vel_buffer_kms:.3f}")
     print(f"  flux_int_jy_kms: {spec.flux_int_jy_kms:.6f}")
     if rscale is not None:
         print(f"  r_scale: {rscale.r_scale_arcsec:.3f}  # arcsec")
@@ -90,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "run_kgas_full.py "
         f"--kgas-id {args.kgas_id} "
+        f"--vmax {kwin.vmax_seed_kms:.3f} "
         f"--vsys {spec.vsys_kms:.3f} "
         f"--line-width-kms {spec.line_width_kms:.3f}"
     )
@@ -121,6 +132,10 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"vsys={spec.vsys_kms:.3f} km/s, flux_int={spec.flux_int_jy_kms:.6f} Jy km/s, "
         f"line width={spec.line_width_kms:.3f} km/s"
+    )
+    print(
+        f"vmax_seed={kwin.vmax_seed_kms:.3f} km/s, "
+        f"vel_buffer={kwin.vel_buffer_kms:.3f} km/s"
     )
     if rscale is not None:
         print(

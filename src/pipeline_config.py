@@ -143,6 +143,8 @@ def _parse_galaxy(
     ra_raw = m.get("ra_deg", None)
     dec_raw = m.get("dec_deg", None)
     vhi_raw = m.get("vhi_kms", None)
+    vmax_seed_raw = m.get("vmax_seed_kms", None)
+    vel_buffer_raw = m.get("vel_buffer_kms", None)
     ra_deg = None if ra_raw is None else float(ra_raw)
     dec_deg = None if dec_raw is None else float(dec_raw)
     if (ra_deg is None) ^ (dec_deg is None):
@@ -150,6 +152,12 @@ def _parse_galaxy(
             f"galaxies.{kgas_id}: ra_deg and dec_deg must both be set or both omitted"
         )
     vhi_kms = None if vhi_raw is None else float(vhi_raw)
+    vmax_seed_kms = None if vmax_seed_raw is None else float(vmax_seed_raw)
+    vel_buffer_kms = None if vel_buffer_raw is None else float(vel_buffer_raw)
+    if vmax_seed_kms is not None and vmax_seed_kms <= 0.0:
+        raise ValueError(f"galaxies.{kgas_id}.vmax_seed_kms must be > 0")
+    if vel_buffer_kms is not None and vel_buffer_kms < 0.0:
+        raise ValueError(f"galaxies.{kgas_id}.vel_buffer_kms must be >= 0")
     return GalaxyConfig(
         kilogas_archive_id=str(m["kilogas_archive_id"]),
         data_path_default=str(m["data_path_default"]),
@@ -160,6 +168,8 @@ def _parse_galaxy(
         obs_freq_range_ghz=obs,
         flux_int_jy_kms=float(m["flux_int_jy_kms"]),
         channel_width_kms=chw,
+        vmax_seed_kms=vmax_seed_kms,
+        vel_buffer_kms=vel_buffer_kms,
         phase_centroid_seed_arcsec=phase_t,
         ra_deg=ra_deg,
         dec_deg=dec_deg,

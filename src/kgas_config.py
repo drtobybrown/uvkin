@@ -99,6 +99,8 @@ def format_config_log(kgas_id: str | None = None, *, pipeline=None) -> str:
                 f"  vsys: {g.vsys}",
                 f"  vmax_circ (from obs_freq_range_ghz vs vsys): {_vc:.2f}",
                 f"  r_scale: {g.r_scale}",
+                f"  vmax_seed_kms: {g.vmax_seed_kms}",
+                f"  vel_buffer_kms: {g.vel_buffer_kms}",
                 f"  pa_init: {g.pa_init}",
                 f"  inc_init: {g.inc_init}",
                 f"  obs_freq_range_ghz: [{lo}, {hi}]",

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from seed_matrix import MatrixAxes, cap_jobs, expand_jobs, materialize_job_settings
+from seed_matrix import MatrixAxes, _default_axes, cap_jobs, expand_jobs, materialize_job_settings
 
 
 def test_expand_jobs_deterministic_order():
@@ -23,6 +23,13 @@ def test_expand_jobs_deterministic_order():
     assert jobs[0]["job_tag"] == "pa10_rs60_pahw30_lw400_sb1_uvbin1"
     assert jobs[1]["job_tag"] == "pa10_rs60_pahw30_lw400_sb1_uvbin0"
     assert jobs[-1]["job_tag"] == "pa20_rs60_pahw30_lw500_sb1_uvbin0"
+
+
+def test_default_axes_match_production_policy():
+    axes = _default_axes()
+    assert axes.pa_half_width_deg == (180.0,)
+    assert axes.inc_half_width_deg == (90.0,)
+    assert axes.spectral_bin_factor == (8,)
 
 
 def test_cap_jobs_raises_without_truncate():

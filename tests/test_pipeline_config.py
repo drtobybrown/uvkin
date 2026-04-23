@@ -21,7 +21,9 @@ def test_load_full_settings():
     assert g7.phase_centroid_seed_arcsec == (0.0, 0.0)
     assert g66.phase_centroid_seed_arcsec == (0.0, 0.0)
     assert g7.vsys == 14229.0
-    assert g66.vsys == 8305.0
+    assert g66.vsys == pytest.approx(8299.563)
+    assert g66.vmax_seed_kms == pytest.approx(184.034)
+    assert g66.vel_buffer_kms == pytest.approx(100.494)
     assert g66.vhi_kms == 8305.0
     assert g7.vhi_kms is None
     assert g7.ra_deg == pytest.approx(146.576065)
@@ -29,7 +31,7 @@ def test_load_full_settings():
     assert g66.ra_deg == pytest.approx(345.667969)
     assert g66.dec_deg == pytest.approx(13.32909)
     assert pipe.aggregation.time_bin_s == 30.0
-    assert pipe.aggregation.spectral_bin_factor == 4
+    assert pipe.aggregation.spectral_bin_factor == 8
     assert pipe.mcmc_bounds.vsys_offset_kms == (-200.0, 200.0)
     assert pipe.mcmc_bounds.inc_half_width_deg == 90.0
     assert pipe.mcmc_bounds.flux_multipliers == (0.05, 10.0)
@@ -40,7 +42,7 @@ def test_load_full_settings():
 def test_load_explicit_path():
     here = Path(__file__).resolve().parent.parent / "config" / "uvkin_settings.yaml"
     pipe = load_pipeline_settings(here)
-    assert pipe.galaxies["KGAS066"].vsys == 8305.0
+    assert pipe.galaxies["KGAS066"].vsys == pytest.approx(8299.563)
 
 
 def test_missing_file():
