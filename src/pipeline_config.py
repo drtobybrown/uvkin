@@ -16,6 +16,7 @@ from config_schema import (
     AggregationConfig,
     GalaxyConfig,
     McmcBoundsConfig,
+    McmcSamplerConfig,
     PipelineSettings,
     SharedConfig,
 )
@@ -97,6 +98,20 @@ def _parse_mcmc_bounds(m: Mapping[str, Any]) -> McmcBoundsConfig:
             "mcmc_bounds.dx_half_width_arcsec/dy_half_width_arcsec must be > 0"
         )
 
+    vm = m.get("vmax_multipliers", (0.25, 4.0))
+    if not isinstance(vm, (list, tuple)) or len(vm) != 2:
+        raise ValueError("mcmc_bounds.vmax_multipliers must be [low_factor, high_factor]")
+    vm_lo, vm_hi = float(vm[0]), float(vm[1])
+    if vm_lo <= 0.0 or vm_hi <= 0.0 or vm_lo >= vm_hi:
+        raise ValueError(f"mcmc_bounds.vmax_multipliers need 0 < low < high; got {vm}")
+
+    rs = m.get("r_scale_multipliers", (0.25, 4.0))
+    if not isinstance(rs, (list, tuple)) or len(rs) != 2:
+        raise ValueError("mcmc_bounds.r_scale_multipliers must be [low_factor, high_factor]")
+    rs_lo, rs_hi = float(rs[0]), float(rs[1])
+    if rs_lo <= 0.0 or rs_hi <= 0.0 or rs_lo >= rs_hi:
+        raise ValueError(f"mcmc_bounds.r_scale_multipliers need 0 < low < high; got {rs}")
+
     return McmcBoundsConfig(
         vsys_offset_kms=(vlo, vhi),
         gas_sigma=(g_lo, g_hi),
@@ -106,7 +121,22 @@ def _parse_mcmc_bounds(m: Mapping[str, Any]) -> McmcBoundsConfig:
         pa_half_width_deg=pa_hw,
         dx_half_width_arcsec=dx_hw,
         dy_half_width_arcsec=dy_hw,
+        vmax_multipliers=(vm_lo, vm_hi),
+        r_scale_multipliers=(rs_lo, rs_hi),
     )
+
+
+def _parse_mcmc_sampler(m: Mapping[str, Any] | None) -> McmcSamplerConfig:
+    if m is None or (isinstance(m, Mapping) and not m):
+        return McmcSamplerConfig()
+    if not isinstance(m, Mapping):
+        raise ValueError("mcmc_sampler must be a mapping")
+    ibf = float(m.get("initial_ball_fraction", 1e-4))
+    if ibf <= 0.0 or ibf > 1.0:
+        raise ValueError(
+            f"mcmc_sampler.initial_ball_fraction must be in (0, 1]; got {ibf}"
+        )
+    return McmcSamplerConfig(initial_ball_fraction=ibf)
 
 
 def _parse_aggregation(m: Mapping[str, Any]) -> AggregationConfig:
@@ -179,7 +209,8 @@ def _parse_galaxy(
 
 def load_pipeline_settings(path: Path | str | None = None) -> PipelineSettings:
     """
-    Parse full YAML: ``shared``, ``galaxies``, ``aggregation``.
+    Parse full YAML: ``shared``, ``galaxies``, ``aggregation``, ``mcmc_bounds``,
+    optional ``mcmc_sampler``.
     """
     p = Path(path) if path is not None else _DEFAULT_YAML
     if not p.is_file():
@@ -205,6 +236,9 @@ def load_pipeline_settings(path: Path | str | None = None) -> PipelineSettings:
         raise ValueError(f"YAML must contain 'mcmc_bounds:' mapping in {p}")
     mcmc_bounds = _parse_mcmc_bounds(mb_raw)
 
+    ms_raw = raw.get("mcmc_sampler")
+    mcmc_sampler = _parse_mcmc_sampler(ms_raw if isinstance(ms_raw, Mapping) else None)
+
     gal_raw = raw.get("galaxies")
     if not isinstance(gal_raw, Mapping) or not gal_raw:
         raise ValueError(f"YAML must contain non-empty 'galaxies:' mapping in {p}")
@@ -221,6 +255,7 @@ def load_pipeline_settings(path: Path | str | None = None) -> PipelineSettings:
         shared=shared,
         aggregation=aggregation,
         mcmc_bounds=mcmc_bounds,
+        mcmc_sampler=mcmc_sampler,
         galaxies=galaxies,
     )
 
@@ -263,6 +298,18 @@ def format_mcmc_bounds_log(mb: McmcBoundsConfig) -> str:
             f"  pa: pa_init ± {mb.pa_half_width_deg} deg (wrapped/clipped to [-180, 180])",
             f"  dx: seed ± {mb.dx_half_width_arcsec} arcsec (MCMC parameter)",
             f"  dy: seed ± {mb.dy_half_width_arcsec} arcsec (MCMC parameter)",
+            f"  vmax: [vmax_ref × {mb.vmax_multipliers[0]}, vmax_ref × {mb.vmax_multipliers[1]}] km/s",
+            f"  r_scale: [r_scale_ref × {mb.r_scale_multipliers[0]}, r_scale_ref × {mb.r_scale_multipliers[1]}] arcsec",
+        ]
+    )
+
+
+def format_mcmc_sampler_log(ms: McmcSamplerConfig) -> str:
+    """emcee / walker tuning block for logging."""
+    return "\n".join(
+        [
+            "MCMC_SAMPLER (uvkin_settings.yaml → mcmc_sampler:):",
+            f"  initial_ball_fraction: {ms.initial_ball_fraction}",
         ]
     )
 
@@ -278,5 +325,6 @@ def format_shared_log(shared: SharedConfig) -> str:
             f"  vel_buffer_kms: {shared.vel_buffer_kms}",
             f"  f_rest_hz: {shared.f_rest_hz}",
             f"  c_kms: {shared.c_kms}",
+            f"  weight_scale_factor: {shared.weight_scale_factor}",
         ]
     )

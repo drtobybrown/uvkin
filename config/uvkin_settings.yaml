@@ -1,7 +1,15 @@
-# uvkin pipeline settings — Optimized for KILOGAS DR1 (2026-03-27)
-# ---------------------------------------------------------------------------
-# Shared grid and CO J=2–1 rest frequency
-# ---------------------------------------------------------------------------
+# uvkin pipeline settings — KILOGAS DR1
+# =============================================================================
+# Read top-to-bottom in the order the pipeline executes:
+#   1. shared      — grid, rest frequency, global velocity buffer, weight scaling
+#   2. galaxies    — per-galaxy catalogue (paths, astrometry, kinematic seeds)
+#   3. aggregation — visibility averaging / binning (spectral bin factor lives here)
+#   4. mcmc_bounds — flat box priors on forward-model parameters (physics)
+#   5. mcmc_sampler— emcee algorithm knobs (walker initial spread; not spectral binning)
+#
+# Phase-centre (dx, dy) seeds: each galaxy may set ``phase_centroid_seed_arcsec``.
+# If omitted, ``aggregation.default_phase_centroid_seed_arcsec`` is used (galaxy wins).
+# =============================================================================
 shared:
   default_channel_width_kms: 1.2699254451290471
   cellsize_arcsec: 0.1   # Gold standard for 0.32 kpc resolution
@@ -10,92 +18,76 @@ shared:
   vel_buffer_kms: 100.0  # Vital for noise-floor (diagnostic) baseline
   f_rest_hz: 230538000000.0
   c_kms: 299792.458
-  weight_scale_factor: 0.5  # Hanning smoothing covariance correction; 1.0 = no correction
+  weight_scale_factor: 0.5   # Hanning smoothing covariance correction; 1.0 = no correction
 
-# ---------------------------------------------------------------------------
-# Galaxy catalog (values from kilogas/analysis/catalogues/kgas007_066_catalogue.csv
-# unless otherwise noted).
+# -----------------------------------------------------------------------------
+# Galaxy catalogue (see catalogues/kgas007_066_catalogue.csv where noted).
 #
-# `pa_init` is stored as the RECEDING-side major-axis PA in standard
-# East-of-North orientation (not just a photometric major-axis angle).
-#
-# `ra_deg`, `dec_deg` are the catalogue ICRS coordinates (NSA/MGE), used by
-# run_kgas_full to cross-check the MS PHASE_DIR stored in the .npz and warn
-# on separations > 1 arcsec.
-# ---------------------------------------------------------------------------
+# ``pa_init`` is the RECEDING-side major-axis PA (East-of-North).
+# ``ra_deg``, ``dec_deg`` — ICRS; run_kgas_full compares MS PHASE_DIR in the .npz.
+# Field order per galaxy: ids/paths → astrometry → kinematics → band/flux → geometry → phase seed.
+# -----------------------------------------------------------------------------
 galaxies:
   KGAS007:
     kilogas_archive_id: KILOGAS007
-    # CANFAR default (submit_kgas.sh passes --data explicitly; local runs override with --data)
     data_path_default: /arc/projects/KILOGAS/analysis/toby_sandbox/visibilities/KILOGAS007.npz
-    ra_deg: 146.576065         # catalogue
-    dec_deg: 2.88434           # catalogue
+    ra_deg: 146.576065
+    dec_deg: 2.88434
     vsys: 14229.0              # cz from catalogue z=0.047463 (no VHI)
-    vhi_kms: null              # not available in catalogue
-    r_scale: 3.0               # approx. Re_R_arcsec=3.20
-    # pa_init = KinMS posAng of redshifted tip (red side = SSE, so ~212.6 deg CW from N).
-    pa_init: 212.6
-    inc_init: 28.9             # acos(ba=0.8753) = 28.92 deg
+    vhi_kms: null               # provenance only when unavailable
+    r_scale: 3.0                # ~Re_R_arcsec from catalogue
+    pa_init: 212.6              # KinMS posAng seed (receding-side convention)
+    inc_init: 28.9              # acos(ba) from catalogue axis ratio
     obs_freq_range_ghz: [219.999, 220.205]
-    flux_int_jy_kms: 24.132    # Sco_deltaV (integrated Jy*km/s)
-    # MS PHASE_DIR matches catalogue ra/decl to <1 mas; start MCMC dx,dy at origin.
+    flux_int_jy_kms: 24.132
     phase_centroid_seed_arcsec: [0.0, 0.0]
 
   KGAS066:
     kilogas_archive_id: KILOGAS066
-    # CANFAR default (submit_kgas.sh passes --data explicitly; local runs override with --data)
     data_path_default: /arc/projects/KILOGAS/analysis/toby_sandbox/visibilities/KILOGAS066.npz
-    ra_deg: 345.667969         # catalogue
-    dec_deg: 13.32909          # catalogue
+    ra_deg: 345.667969
+    dec_deg: 13.32909
     vhi_kms: 8305.0
-    r_scale: 3.0               # arcsec
+    vsys: 8299.563
+    r_scale: 3.0
     pa_init: 205.212
     inc_init: 51.690
-    vsys: 8299.563
-    vmax_seed_kms: 184.034   # moment1-seeded; used before obs-band fallback
-    vel_buffer_kms: 100.494  # moment1-seeded trim/mask buffer
+    vmax_seed_kms: 184.034     # moment1-seeded; used before obs-band fallback
+    vel_buffer_kms: 100.494     # spectral trim / diagnostic line-mask buffer
     flux_int_jy_kms: 160.055473
-    # Observed CO(2–1) band in GHz (spectral trim / vmax from obs band when used).
     obs_freq_range_ghz: [224.148, 224.506]
-    # MS PHASE_DIR matches catalogue ra/decl to <1 mas; start MCMC dx,dy at origin.
     phase_centroid_seed_arcsec: [0.0, 0.0]
 
-# ---------------------------------------------------------------------------
-# Visibility aggregation
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Visibility aggregation (after a galaxy is chosen).
+# -----------------------------------------------------------------------------
 aggregation:
-  # Reset to origin for default; specific galaxies use centroids above
-  default_phase_centroid_seed_arcsec: [0.0, 0.0] 
-  
+  # Default (dx, dy) arcsec when a galaxy omits phase_centroid_seed_arcsec.
+  default_phase_centroid_seed_arcsec: [0.0, 0.0]
   uv_bin_size_m: 10.0
   time_bin_s: 30.0
   apply_uv_binning: true
   apply_time_averaging: true
-  
-  # Production coarse binning for fast robust first-pass fits (~10 km/s on KGAS066).
-  spectral_bin_factor: 8 
+  spectral_bin_factor: 8      # ~10 km/s channels on KGAS066 after trim
 
-# ---------------------------------------------------------------------------
-# emcee / uvfit priors
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# MCMC flat box priors (physics). vmax / r_scale use multipliers on the run seeds.
+# -----------------------------------------------------------------------------
 mcmc_bounds:
-  # Widened from ±50 km/s after catalogue audit: catalogue VHI / cz(z) seed
-  # uncertainty can be several tens of km/s; ±200 covers both without the
-  # wall-hugging failure mode observed on KGAS066/007.
   vsys_offset_kms: [-200.0, 200.0]
-  gas_sigma: [3.0, 80.0]   # Upper raised so σ is not forced to a wall when geometry is off
-
-  # Integrated flux S_int (Jy·km/s): MCMC flux box is [low×S_int, high×S_int]
+  gas_sigma: [3.0, 80.0]
   flux_multipliers: [0.05, 10.0]
-
   gamma: [0.0, 2.0]
-
-  # inc: half-width 90° → full [0°, 90°] after clamp (prevents inc wall-hugging)
   inc_half_width_deg: 90.0
-  pa_half_width_deg: 180.0  # Full 360° search around pa_init
-
-  # Phase-centre (dx, dy) MCMC box around the seed in aggregation /
-  # galaxies.phase_centroid_seed_arcsec. KinMSModel now fits these directly;
-  # the pre-fit auto-centroid step has been removed.
+  pa_half_width_deg: 180.0
   dx_half_width_arcsec: 5.0
   dy_half_width_arcsec: 5.0
+  vmax_multipliers: [0.25, 4.0]
+  r_scale_multipliers: [0.25, 4.0]
+
+# -----------------------------------------------------------------------------
+# emcee tuning (not spectral rebinning). initial_ball_fraction scales the Gaussian
+# ball around MAP seeds as a fraction of each parameter's prior box width (uvfit 0.2+).
+# -----------------------------------------------------------------------------
+mcmc_sampler:
+  initial_ball_fraction: 1.0e-4

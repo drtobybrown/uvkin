@@ -56,11 +56,22 @@ parser.add_argument("--max-steps", type=int, default=10000,
 # Galaxy-specific physical parameters (defaults from kgas_config --kgas-id entry)
 parser.add_argument(
     "--vmax", type=float, default=None,
-    help="Peak circular velocity (km/s), held fixed. Default: vmax_seed_kms in galaxy config, else obs-band fallback.",
+    help="Peak circular velocity (km/s) seed for MCMC and line-width default. "
+    "Default: vmax_seed_kms in galaxy config, else obs-band fallback.",
 )
 parser.add_argument(
     "--r-scale", type=float, default=None,
-    help="Scale radius (arcsec), held fixed. Default: kgas_config r_scale.",
+    help="Scale radius (arcsec) seed for MCMC. Default: kgas_config r_scale.",
+)
+parser.add_argument(
+    "--initial-ball-fraction",
+    type=float,
+    default=None,
+    metavar="F",
+    help=(
+        "emcee initial walker Gaussian spread as a fraction of each box width "
+        "(uvfit Fitter). Default: mcmc_sampler.initial_ball_fraction in pipeline YAML."
+    ),
 )
 parser.add_argument(
     "--vsys", type=float, default=None,
@@ -142,6 +153,14 @@ LINE_WIDTH_KMS = (
     else (2.0 * VMAX)
 )
 
+if args.initial_ball_fraction is not None:
+    _ibf = float(args.initial_ball_fraction)
+    if _ibf <= 0.0 or _ibf > 1.0:
+        raise SystemExit("--initial-ball-fraction must be in (0, 1]")
+    INITIAL_BALL_FRACTION = _ibf
+else:
+    INITIAL_BALL_FRACTION = float(PIPE.mcmc_sampler.initial_ball_fraction)
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -165,7 +184,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 
 from empirical_bounds import BoundedGNFWKinMSModel
-from fit_bounds import get_empirical_bounds
+from fit_bounds import format_resolved_empirical_bounds, get_empirical_bounds
 from spectral_windows import build_velocity_windows, compute_line_channel_mask
 from uv_aggregate import (
     average_time_steps,
@@ -309,11 +328,23 @@ def write_bestfit_cube_fits(
 # ---------------------------------------------------------------------------
 # Source parameters (grid + cosmology: kgas_config.SHARED; galaxy block via --kgas-id)
 # ---------------------------------------------------------------------------
+log.info("CONFIG — pipeline YAML and galaxy catalogue")
 log.info("kgas_config reference:")
 for _line in format_config_log(args.kgas_id, pipeline=PIPE).splitlines():
     log.info("  %s", _line)
 log.info(
-    "Using catalog/seeded vsys/r_scale/vmax unless overridden on the CLI."
+    "Catalogue (galaxy block) vs effective run: vsys_cat=%.3f vsys_eff=%.3f | "
+    "r_scale_cat=%.3f r_scale_eff=%.3f | vmax_seed_cat=%s vmax_eff=%.3f (km/s, arcsec)",
+    float(_cfg.vsys),
+    float(VSYS),
+    float(_cfg.r_scale),
+    float(R_SCALE),
+    _cfg.vmax_seed_kms,
+    float(VMAX),
+)
+log.info(
+    "emcee initial_ball_fraction=%g (CLI overrides YAML when --initial-ball-fraction set)",
+    INITIAL_BALL_FRACTION,
 )
 log.info(
     "Effective run: vsys=%.1f vmax=%.1f r_scale=%.1f pa_init=%.1f inc_init=%.1f "
@@ -600,10 +631,18 @@ empirical_bounds = get_empirical_bounds(
     flux_int=mcmc_flux_jy_kms,
     inc_int=INC_INIT,
     pa_int=PA_INIT,
+    vmax_ref=float(VMAX),
+    r_scale_ref=float(R_SCALE),
     mcmc_bounds=PIPE.mcmc_bounds,
     gas_sigma_floor=_gas_sigma_floor,
     phase_centroid_seed_arcsec=_centroid_seed,
 )
+
+log.info("=" * 60)
+log.info("BOUNDS — resolved MCMC box prior (after gas_sigma floor)")
+for _line in format_resolved_empirical_bounds(empirical_bounds).splitlines():
+    log.info("  %s", _line)
+log.info("=" * 60)
 
 uvdata = UVDataset(
     u_m=u_m_all, v_m=v_m_all,
@@ -819,8 +858,6 @@ log.info("=" * 60)
 radius = np.arange(0.01, 100, 0.1)
 sbprof = np.exp(-radius / R_SCALE)
 
-log.info("Empirical MCMC bounds: %s", empirical_bounds)
-
 model = BoundedGNFWKinMSModel(
     empirical_bounds=empirical_bounds,
     vmax=VMAX,
@@ -855,6 +892,8 @@ init_params = {
     "gamma": 0.5,
     "dx": float(_centroid_seed[0]),
     "dy": float(_centroid_seed[1]),
+    "vmax": float(VMAX),
+    "r_scale": float(R_SCALE),
 }
 
 frozen_params = model.frozen_params
@@ -874,6 +913,7 @@ n_params = len(init_params)
 # ---------------------------------------------------------------------------
 # MCMC
 # ---------------------------------------------------------------------------
+log.info("MCMC — emcee configuration")
 if args.converge:
     log.info(
         "Running emcee with tau convergence (%d walkers, check every %d steps, "
@@ -894,6 +934,7 @@ result_mcmc = fitter.fit(
     n_steps=args.n_steps,
     n_burn=args.n_burn,
     n_processes=args.n_processes,
+    initial_ball_fraction=INITIAL_BALL_FRACTION,
     converge=args.converge,
     check_interval=args.check_interval,
     tau_factor=args.tau_factor,
@@ -904,6 +945,19 @@ log.info(
     "MCMC done in %.1fs  rchi2=%.6f  MAP=%s",
     time.time() - t0, result_mcmc.reduced_chi2, result_mcmc.params,
 )
+if result_mcmc.raw_result is not None and hasattr(
+    result_mcmc.raw_result, "acceptance_fraction"
+):
+    _af = result_mcmc.raw_result.acceptance_fraction
+    log.info(
+        "emcee acceptance_fraction (mean over walkers): %.4f",
+        float(np.mean(_af)),
+    )
+if result_mcmc.chains is not None:
+    log.info(
+        "Chain shape (post-burn kept steps, walkers, dim): %s",
+        getattr(result_mcmc.chains, "shape", None),
+    )
 if result_mcmc.converged is not None:
     log.info("Converged: %s", result_mcmc.converged)
 if result_mcmc.autocorr_time is not None:
@@ -923,8 +977,8 @@ save_dict = dict(
     n_params=n_params,
     chains=result_mcmc.chains,
     log_prob=result_mcmc.log_prob,
-    vmax=VMAX,
-    r_scale=R_SCALE,
+    vmax=float(result_mcmc.params.get("vmax", VMAX)),
+    r_scale=float(result_mcmc.params.get("r_scale", R_SCALE)),
     spectral_bin_factor=AGGREGATION.spectral_bin_factor,
     aggregation_default_phase_centroid_seed_arcsec=np.array(
         AGGREGATION.phase_centroid_seed_arcsec

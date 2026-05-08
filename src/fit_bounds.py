@@ -1,5 +1,5 @@
 """
-MCMC box priors for the six-parameter gNFW / KinMS fit (no uvfit dependency).
+MCMC box priors for the gNFW / KinMS fit (no uvfit dependency).
 
 Values come from ``uvkin_settings.yaml`` → ``mcmc_bounds:`` (:class:`config_schema.McmcBoundsConfig`).
 """
@@ -9,12 +9,42 @@ from __future__ import annotations
 from config_schema import McmcBoundsConfig
 
 
+def format_resolved_empirical_bounds(bounds: dict[str, tuple[float, float]]) -> str:
+    """Multi-line block for ``run.log``: one resolved interval per free parameter."""
+    order = (
+        "dx",
+        "dy",
+        "inc",
+        "pa",
+        "flux",
+        "vsys",
+        "gas_sigma",
+        "gamma",
+        "vmax",
+        "r_scale",
+    )
+    lines = ["RESOLVED_MCMC_BOUNDS (numeric box prior, km/s / deg / Jy·km/s / arcsec):"]
+    for name in order:
+        if name not in bounds:
+            continue
+        lo, hi = bounds[name]
+        lines.append(f"  {name}: ({lo}, {hi})")
+    for name in sorted(bounds.keys()):
+        if name in order:
+            continue
+        lo, hi = bounds[name]
+        lines.append(f"  {name}: ({lo}, {hi})")
+    return "\n".join(lines)
+
+
 def get_empirical_bounds(
     vsys_int: float,
     flux_int: float,
     inc_int: float,
     pa_int: float,
     *,
+    vmax_ref: float,
+    r_scale_ref: float,
     mcmc_bounds: McmcBoundsConfig | None = None,
     flux_bounds: tuple[float, float] | None = None,
     gas_sigma_floor: float | None = None,
@@ -34,6 +64,9 @@ def get_empirical_bounds(
         ``flux`` there with no extra ``dv`` scaling.
     inc_int, pa_int
         Degrees: inclination and position angle used to centre ``inc`` / ``pa``.
+    vmax_ref, r_scale_ref
+        Positive references (km/s and arcsec) for ``vmax`` / ``r_scale`` box priors,
+        typically the effective catalogue / CLI values used to seed the run.
     mcmc_bounds
         If ``None``, loads from default ``uvkin_settings.yaml``.
     flux_bounds
@@ -60,6 +93,10 @@ def get_empirical_bounds(
         raise ValueError(
             f"flux_int must be positive integrated flux (Jy·km/s); got {flux_int!r}"
         )
+    if vmax_ref <= 0.0:
+        raise ValueError(f"vmax_ref must be positive (km/s); got {vmax_ref!r}")
+    if r_scale_ref <= 0.0:
+        raise ValueError(f"r_scale_ref must be positive (arcsec); got {r_scale_ref!r}")
 
     v_lo_off, v_hi_off = cfg.vsys_offset_kms
     b_vsys = (vsys_int + v_lo_off, vsys_int + v_hi_off)
@@ -107,6 +144,11 @@ def get_empirical_bounds(
     b_dx = (dx_seed - cfg.dx_half_width_arcsec, dx_seed + cfg.dx_half_width_arcsec)
     b_dy = (dy_seed - cfg.dy_half_width_arcsec, dy_seed + cfg.dy_half_width_arcsec)
 
+    vm_lo, vm_hi = cfg.vmax_multipliers
+    rs_lo, rs_hi = cfg.r_scale_multipliers
+    b_vmax = (vm_lo * vmax_ref, vm_hi * vmax_ref)
+    b_r_scale = (rs_lo * r_scale_ref, rs_hi * r_scale_ref)
+
     return {
         "inc": (lo_i, hi_i),
         "pa": (lo_p, hi_p),
@@ -116,4 +158,6 @@ def get_empirical_bounds(
         "gamma": b_gamma,
         "dx": b_dx,
         "dy": b_dy,
+        "vmax": b_vmax,
+        "r_scale": b_r_scale,
     }

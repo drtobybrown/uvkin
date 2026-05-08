@@ -1,0 +1,67 @@
+# Open, coarse MCMC exploration profile (wide box priors + larger walker ball).
+# Same grid/aggregation as production defaults unless you edit ``shared`` / ``aggregation``.
+# Use: python run_kgas_full.py ... --pipeline-settings config/uvkin_settings_open_explore.yaml
+# =============================================================================
+shared:
+  default_channel_width_kms: 1.2699254451290471
+  cellsize_arcsec: 0.1
+  nx: 256
+  ny: 256
+  vel_buffer_kms: 100.0
+  f_rest_hz: 230538000000.0
+  c_kms: 299792.458
+  weight_scale_factor: 0.5
+
+galaxies:
+  KGAS007:
+    kilogas_archive_id: KILOGAS007
+    data_path_default: /arc/projects/KILOGAS/analysis/toby_sandbox/visibilities/KILOGAS007.npz
+    ra_deg: 146.576065
+    dec_deg: 2.88434
+    vsys: 14229.0
+    vhi_kms: null
+    r_scale: 3.0
+    pa_init: 212.6
+    inc_init: 28.9
+    obs_freq_range_ghz: [219.999, 220.205]
+    flux_int_jy_kms: 24.132
+    phase_centroid_seed_arcsec: [0.0, 0.0]
+
+  KGAS066:
+    kilogas_archive_id: KILOGAS066
+    data_path_default: /arc/projects/KILOGAS/analysis/toby_sandbox/visibilities/KILOGAS066.npz
+    ra_deg: 345.667969
+    dec_deg: 13.32909
+    vhi_kms: 8305.0
+    vsys: 8299.563
+    r_scale: 3.0
+    pa_init: 205.212
+    inc_init: 51.690
+    vmax_seed_kms: 184.034
+    vel_buffer_kms: 100.494
+    flux_int_jy_kms: 160.055473
+    obs_freq_range_ghz: [224.148, 224.506]
+    phase_centroid_seed_arcsec: [0.0, 0.0]
+
+aggregation:
+  default_phase_centroid_seed_arcsec: [0.0, 0.0]
+  uv_bin_size_m: 10.0
+  time_bin_s: 30.0
+  apply_uv_binning: true
+  apply_time_averaging: true
+  spectral_bin_factor: 8
+
+mcmc_bounds:
+  vsys_offset_kms: [-5000.0, 5000.0]
+  gas_sigma: [1.0, 500.0]
+  flux_multipliers: [0.001, 1000.0]
+  gamma: [0.0, 2.0]
+  inc_half_width_deg: 90.0
+  pa_half_width_deg: 180.0
+  dx_half_width_arcsec: 12.8   # ~0.5 * nx * cellsize (half FoV)
+  dy_half_width_arcsec: 12.8
+  vmax_multipliers: [0.05, 20.0]
+  r_scale_multipliers: [0.05, 20.0]
+
+mcmc_sampler:
+  initial_ball_fraction: 0.05

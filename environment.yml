@@ -1,0 +1,15 @@
+# Example conda environment (trim paths / versions for your site).
+name: uvkin
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pip
+  - numpy>=1.24
+  - scipy>=1.10
+  - astropy>=5.3
+  - pyyaml>=6.0
+  - pip:
+      # Pin or install uvfit from a branch that matches this uvkin checkout
+      # (requires uvfit>=0.2.0 for free vmax/r_scale + initial_ball_fraction).
+      - "uvfit[mcmc,kinms] @ git+https://github.com/drtobybrown/uvfit.git@open-mcmc-explore"

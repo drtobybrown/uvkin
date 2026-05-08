@@ -9,6 +9,7 @@ from config_schema import GalaxyConfig, PipelineSettings, SharedConfig
 from pipeline_config import (
     format_aggregation_log,
     format_mcmc_bounds_log,
+    format_mcmc_sampler_log,
     format_shared_log,
     load_pipeline_settings,
 )
@@ -82,6 +83,7 @@ def format_config_log(kgas_id: str | None = None, *, pipeline=None) -> str:
         format_shared_log(pipe.shared),
         format_aggregation_log(pipe.aggregation),
         format_mcmc_bounds_log(pipe.mcmc_bounds),
+        format_mcmc_sampler_log(pipe.mcmc_sampler),
     ]
     if kgas_id is not None:
         if kgas_id not in pipe.galaxies:

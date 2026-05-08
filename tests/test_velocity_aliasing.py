@@ -114,6 +114,8 @@ class TestVelocityAliasing:
             flux_int=100.0,
             inc_int=45.0,
             pa_int=90.0,
+            vmax_ref=120.0,
+            r_scale_ref=2.0,
             mcmc_bounds=mcmc_bounds,
         )
         assert bounds_no_floor["gas_sigma"][0] == 3.0
@@ -124,6 +126,8 @@ class TestVelocityAliasing:
             flux_int=100.0,
             inc_int=45.0,
             pa_int=90.0,
+            vmax_ref=120.0,
+            r_scale_ref=2.0,
             mcmc_bounds=mcmc_bounds,
             gas_sigma_floor=5.08,
         )
@@ -135,6 +139,8 @@ class TestVelocityAliasing:
             flux_int=100.0,
             inc_int=45.0,
             pa_int=90.0,
+            vmax_ref=120.0,
+            r_scale_ref=2.0,
             mcmc_bounds=mcmc_bounds,
             gas_sigma_floor=2.0,
         )

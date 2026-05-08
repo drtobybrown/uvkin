@@ -17,6 +17,29 @@ conversion, [UVfit](https://github.com/drtobybrown/uvfit) for
 visibility-space fitting, and [spectral-cube](https://spectral-cube.readthedocs.io/)
 for FITS model cubes and `plot_results.ipynb`.
 
+**UVfit version:** this branch expects **uvfit ≥ 0.2.0**, where `vmax` and
+`r_scale` are free MCMC parameters in `gNFWKinMSModel` and emcee accepts
+`initial_ball_fraction` for the initial walker ball. Install a matching
+checkout (for example the `open-mcmc-explore` branch) with
+`pip install "uvfit @ git+https://github.com/drtobybrown/uvfit.git@open-mcmc-explore#egg=uvfit[mcmc,kinms]"` or an editable `-e` path.
+
+## Pipeline YAML layout (`config/uvkin_settings.yaml`)
+
+Top-level sections follow the runtime order:
+
+1. **`shared`** — pixel grid, CO rest frequency, Hanning `weight_scale_factor`, default channel width.
+2. **`galaxies`** — per-`KGAS###` catalogue entries (paths, `vsys`, `r_scale`, `obs_freq_range_ghz`, flux, optional `vmax_seed_kms` / `vel_buffer_kms`, phase-centroid seed).
+3. **`aggregation`** — UV / time averaging and **`spectral_bin_factor`** (spectral rebinning lives here, not under `mcmc_sampler`).
+4. **`mcmc_bounds`** — flat box priors on all forward-model parameters, including **`vmax_multipliers`** / **`r_scale_multipliers`** (factors on the run’s effective `vmax` / `r_scale` seeds).
+5. **`mcmc_sampler`** — emcee-only knobs such as **`initial_ball_fraction`** (Gaussian spread of walkers as a fraction of each prior box width).
+
+**Phase-centre precedence:** if `galaxies.<id>.phase_centroid_seed_arcsec` is set, it overrides `aggregation.default_phase_centroid_seed_arcsec`.
+
+**Open exploration profile:** use
+`--pipeline-settings config/uvkin_settings_open_explore.yaml` (wide priors,
+larger `initial_ball_fraction`). The seed-matrix helper accepts
+`--base-pipeline-settings` to materialize variants from the same catalogue.
+
 ## gNFW Kinematic Fitting
 
 Fit a generalized NFW (gNFW) velocity profile directly to visibilities using
@@ -58,6 +81,13 @@ python run_kgas_full.py \
 # Optional overrides: --vsys, --vmax, --r-scale (defaults are catalog values with --kgas-id)
 # Optional line mask width (km/s); default is 2×vmax
 python run_kgas_full.py --data ... --outdir ... --kgas-id KGAS007 --line-width-kms 400
+
+# Wide priors + coarse walker ball (see config/uvkin_settings_open_explore.yaml)
+python run_kgas_full.py --data ... --outdir ... --kgas-id KGAS066 \
+  --pipeline-settings config/uvkin_settings_open_explore.yaml
+
+# Override emcee initial ball without editing YAML (fraction of each box width, 0–1]
+python run_kgas_full.py --data ... --outdir ... --kgas-id KGAS066 --initial-ball-fraction 0.02
 ```
 
 ### Production run (CANFAR batch)
@@ -136,6 +166,13 @@ Results are saved per galaxy to `{outdir}/`:
 | `result.npz` | MAP params, chi2, MCMC chains, autocorrelation time |
 | `bestfit_cube.fits` | Best-fit model cube (3D FITS + WCS; load with spectral-cube) |
 | `run.log` | Full runtime log |
+
+### Reading `run.log`
+
+Major blocks are prefixed for scanning: **`CONFIG`** (echo of YAML + catalogue
+vs effective seeds + `initial_ball_fraction`), **`BOUNDS`** (numeric resolved
+MCMC box for every free parameter), preflight diagnostics, then **`MCMC`**
+(emcee settings, acceptance fraction, chain shape, τ when used).
 
 ## Prior seeding from imaging products
 

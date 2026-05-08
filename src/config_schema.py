@@ -82,10 +82,12 @@ class AggregationConfig:
 @dataclass(frozen=True)
 class McmcBoundsConfig:
     """
-    Box priors for the six KinMS / gNFW fit parameters (see ``get_empirical_bounds``).
+    Box priors for the KinMS / gNFW MCMC parameters (see ``get_empirical_bounds``).
 
     * ``vsys_offset_kms``: interval is ``[vsys_int + lo, vsys_int + hi]`` (km/s).
     * ``flux_multipliers``: ``[low, high]`` factors on integrated catalog flux (Jy·km/s).
+    * ``vmax_multipliers`` / ``r_scale_multipliers``: factors on the reference
+      ``vmax_ref`` (km/s) and ``r_scale_ref`` (arcsec) passed into ``get_empirical_bounds``.
     * ``inc_half_width_deg`` / ``pa_half_width_deg``: half-widths around ``inc_int`` / ``pa_int``
       (degrees), with inc clamped to ``[0, 90]`` and pa wrapped/clipped to ``[-180, 180]``.
     """
@@ -100,6 +102,16 @@ class McmcBoundsConfig:
     # The MCMC explores dx, dy in `[seed - hw, seed + hw]` for each axis.
     dx_half_width_arcsec: float = 1.0
     dy_half_width_arcsec: float = 1.0
+    vmax_multipliers: Tuple[float, float] = (0.25, 4.0)
+    r_scale_multipliers: Tuple[float, float] = (0.25, 4.0)
+
+
+@dataclass(frozen=True)
+class McmcSamplerConfig:
+    """Algorithm knobs for emcee (separate from physics ``mcmc_bounds``)."""
+
+    # Gaussian spread of initial walkers as a fraction of each box width; see uvfit Fitter.
+    initial_ball_fraction: float = 1e-4
 
 
 @dataclass(frozen=True)
@@ -109,4 +121,5 @@ class PipelineSettings:
     shared: SharedConfig
     aggregation: AggregationConfig
     mcmc_bounds: McmcBoundsConfig
+    mcmc_sampler: McmcSamplerConfig
     galaxies: Dict[str, GalaxyConfig]

@@ -37,6 +37,21 @@ def test_load_full_settings():
     assert pipe.mcmc_bounds.flux_multipliers == (0.05, 10.0)
     assert pipe.mcmc_bounds.gas_sigma == (3.0, 80.0)
     assert pipe.mcmc_bounds.dx_half_width_arcsec == 5.0
+    assert pipe.mcmc_bounds.vmax_multipliers == (0.25, 4.0)
+    assert pipe.mcmc_bounds.r_scale_multipliers == (0.25, 4.0)
+    assert pipe.mcmc_sampler.initial_ball_fraction == pytest.approx(1e-4)
+
+
+def test_load_open_explore_settings():
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "config"
+        / "uvkin_settings_open_explore.yaml"
+    )
+    pipe = load_pipeline_settings(path)
+    assert pipe.mcmc_sampler.initial_ball_fraction == pytest.approx(0.05)
+    assert pipe.mcmc_bounds.vsys_offset_kms[0] == -5000.0
+    assert pipe.mcmc_bounds.dx_half_width_arcsec == pytest.approx(12.8)
 
 
 def test_load_explicit_path():
