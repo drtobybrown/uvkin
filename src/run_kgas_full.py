@@ -176,6 +176,7 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger(__name__)
+RUN_T0 = time.time()
 
 # ---------------------------------------------------------------------------
 # Imports (deferred so --help is fast)
@@ -926,7 +927,7 @@ else:
         args.n_walkers, args.n_steps, args.n_burn, args.n_processes,
     )
 
-t0 = time.time()
+t_mcmc0 = time.time()
 result_mcmc = fitter.fit(
     initial_params=init_params,
     method="emcee",
@@ -943,7 +944,7 @@ result_mcmc = fitter.fit(
 )
 log.info(
     "MCMC done in %.1fs  rchi2=%.6f  MAP=%s",
-    time.time() - t0, result_mcmc.reduced_chi2, result_mcmc.params,
+    time.time() - t_mcmc0, result_mcmc.reduced_chi2, result_mcmc.params,
 )
 if result_mcmc.raw_result is not None and hasattr(
     result_mcmc.raw_result, "acceptance_fraction"
@@ -1016,4 +1017,4 @@ except OSError as exc:
     raise
 log.info("Best-fit cube saved to %s", cube_fits_path)
 
-log.info("Total runtime: %.1f min", (time.time() - t0) / 60)
+log.info("Total wall time: %.1f min", (time.time() - RUN_T0) / 60.0)
