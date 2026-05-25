@@ -223,6 +223,12 @@ def _parse_galaxy(
             raise ValueError(
                 f"galaxies.{kgas_id}.flux_bounds_jy_kms need 0 < lo < hi; got {fb_raw}"
             )
+    freeze_geom_raw = m.get("freeze_imaging_geometry", False)
+    if isinstance(freeze_geom_raw, bool):
+        freeze_imaging_geometry = freeze_geom_raw
+    else:
+        freeze_imaging_geometry = bool(freeze_geom_raw)
+
     return GalaxyConfig(
         kilogas_archive_id=str(m["kilogas_archive_id"]),
         data_path_default=str(m["data_path_default"]),
@@ -242,6 +248,7 @@ def _parse_galaxy(
         imaging_products=imaging,
         flux_seed_source=flux_seed_src,
         flux_bounds_jy_kms=flux_bounds,
+        freeze_imaging_geometry=freeze_imaging_geometry,
     )
 
 

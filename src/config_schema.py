@@ -52,6 +52,8 @@ class GalaxyConfig:
     # MCMC flux: ``auto`` aligns seed/bounds to visibility audit when mom0/data > 2.
     flux_seed_source: str | None = None
     flux_bounds_jy_kms: Tuple[float, float] | None = None
+    # When true (with imaging seeds): MCMC fits flux, gamma, vmax, gas_sigma, r_scale only.
+    freeze_imaging_geometry: bool = False
 
     @property
     def flux_int(self) -> float:

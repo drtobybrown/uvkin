@@ -161,3 +161,26 @@ def get_empirical_bounds(
         "vmax": b_vmax,
         "r_scale": b_r_scale,
     }
+
+
+FROZEN_GEOMETRY_KEYS = ("pa", "inc", "vsys", "dx", "dy")
+MCMC_FREE_WHEN_GEOMETRY_FROZEN = ("flux", "gamma", "vmax", "gas_sigma", "r_scale")
+
+
+def freeze_imaging_geometry_bounds(
+    bounds: dict[str, tuple[float, float]],
+    *,
+    pa_deg: float,
+    inc_deg: float,
+    vsys_kms: float,
+    dx_arcsec: float,
+    dy_arcsec: float,
+) -> dict[str, tuple[float, float]]:
+    """Pin imaging-derived geometry; ``BoundedGNFWKinMSModel`` treats ``lo == hi`` as frozen."""
+    out = dict(bounds)
+    out["pa"] = (float(pa_deg), float(pa_deg))
+    out["inc"] = (float(inc_deg), float(inc_deg))
+    out["vsys"] = (float(vsys_kms), float(vsys_kms))
+    out["dx"] = (float(dx_arcsec), float(dx_arcsec))
+    out["dy"] = (float(dy_arcsec), float(dy_arcsec))
+    return out

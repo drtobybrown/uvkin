@@ -82,6 +82,25 @@ def test_load_diagnose_30kms_settings():
     assert mb.r_scale_multipliers == (0.25, 4.0)
 
 
+def test_load_diagnose_5kms_frozen_settings():
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "config"
+        / "uvkin_settings_diagnose_5kms_frozen.yaml"
+    )
+    pipe = load_pipeline_settings(path)
+    assert pipe.aggregation.spectral_bin_factor == 4
+    g66 = pipe.galaxies["KGAS066"]
+    assert g66.freeze_imaging_geometry is True
+    assert g66.flux_seed_source == "auto"
+    assert g66.flux_bounds_jy_kms == (10.0, 120.0)
+    assert g66.imaging_products is not None
+    assert g66.imaging_products.channel_width_kms == pytest.approx(30.0)
+    mb = pipe.mcmc_bounds
+    assert mb.vmax_multipliers == (0.5, 2.0)
+    assert mb.gas_sigma == (5.0, 100.0)
+
+
 def test_load_explicit_path():
     here = Path(__file__).resolve().parent.parent / "config" / "uvkin_settings.yaml"
     pipe = load_pipeline_settings(here)

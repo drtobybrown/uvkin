@@ -69,6 +69,8 @@ class ImagingPreflightResult:
     fit_dv_kms: float | None
     seeds: ImagingSeeds | None
     prior_reference: dict[str, Any]
+    geometry_major_axis_pa_en_deg: float | None = None
+    geometry_receding_pa_en_deg: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -317,6 +319,8 @@ def run_imaging_preflight(
     bmaj: float | None = None
     bmin: float | None = None
     seeds: ImagingSeeds | None = None
+    geom_major_pa: float | None = None
+    geom_receding_pa: float | None = None
 
     if paths.mom0 is not None and paths.mom0.is_file():
         m0, wcs2d = load_moment_fits(paths.mom0)
@@ -328,6 +332,8 @@ def run_imaging_preflight(
         if paths.mom1 is not None and paths.mom1.is_file():
             m1, _ = load_moment_fits(paths.mom1)
             geom = estimate_geometry_prior(moment1=m1, moment0=m0, wcs2d=wcs2d)
+            geom_major_pa = geom.major_axis_pa_en_deg
+            geom_receding_pa = geom.receding_pa_en_deg
             rscale = estimate_r_scale_prior(moment0=m0, wcs2d=wcs2d)
             kwin = estimate_kinematic_window_prior(moment1=m1, moment0=m0)
             gas_sigma = gas_sigma_floor_kms
@@ -405,6 +411,8 @@ def run_imaging_preflight(
         fit_dv_kms=fit_dv_kms,
         seeds=seeds,
         prior_reference=prior_ref,
+        geometry_major_axis_pa_en_deg=geom_major_pa,
+        geometry_receding_pa_en_deg=geom_receding_pa,
     )
 
 
@@ -456,7 +464,21 @@ def format_imaging_preflight_log(result: ImagingPreflightResult) -> str:
         lines.extend(
             [
                 "  imaging seeds (KinMS-compatible):",
-                f"    pa={s.pa_deg:.3f} deg  inc={s.inc_deg:.3f} deg",
+                f"    pa={s.pa_deg:.3f} deg (KinMS)  inc={s.inc_deg:.3f} deg",
+            ]
+        )
+        if (
+            result.geometry_major_axis_pa_en_deg is not None
+            and result.geometry_receding_pa_en_deg is not None
+        ):
+            lines.extend(
+                [
+                    f"    major_axis_pa_en (mod 180)={result.geometry_major_axis_pa_en_deg:.3f} deg",
+                    f"    receding_pa_en={result.geometry_receding_pa_en_deg:.3f} deg",
+                ]
+            )
+        lines.extend(
+            [
                 f"    vsys={s.vsys_kms:.3f} km/s  vmax={s.vmax_kms:.3f} km/s",
                 f"    r_scale={s.r_scale_arcsec:.3f} arcsec  gas_sigma={s.gas_sigma_kms:.3f} km/s",
                 f"    dx={s.dx_arcsec:.5f} arcsec  dy={s.dy_arcsec:.5f} arcsec",

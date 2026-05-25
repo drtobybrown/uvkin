@@ -30,7 +30,7 @@ import pytest
 
 _UVKIN_ROOT = Path(__file__).resolve().parent.parent
 _RUN_SCRIPT = _UVKIN_ROOT / "src" / "run_kgas_full.py"
-_PIPELINE_CFG = _UVKIN_ROOT / "config" / "uvkin_settings_diagnose_30kms.yaml"
+_PIPELINE_CFG = _UVKIN_ROOT / "config" / "uvkin_settings_diagnose_5kms_frozen.yaml"
 
 
 def _resolve_npz() -> Path | None:
@@ -87,7 +87,7 @@ def smoke_run(tmp_path_factory):
         "--imaging-mom1", str(_IMG_DIR / "KGAS66_mom1.fits"),
         "--imaging-mom2", str(_IMG_DIR / "KGAS66_mom2.fits"),
         "--use-imaging-seeds",
-        "--imaging-tight-priors",
+        "--freeze-imaging-geometry",
         "--flux-seed-source", "auto",
         "--run-flux-audit",
         "--mom0-threshold", "0.0",
@@ -162,6 +162,24 @@ def test_preflight_cube_n_clouds(smoke_run):
     )
 
 
+def test_imaging_pa_matches_catalog_and_preflight_morphology(smoke_run):
+    """PA from mom1 must match catalogue; preflight cubes confirm orientation."""
+    log = smoke_run["log"]
+    assert "PA PIPELINE ASSERTION — PASS" in log, (
+        "PA consistency block missing or failed; check preflight comparison.png"
+    )
+    m = re.search(
+        r"kinms_pa \(imaging seeds\)\s*:\s*([0-9.]+)\s*deg",
+        log,
+    )
+    assert m, "kinms_pa not logged in PA assertion block"
+    kinms_pa = float(m.group(1))
+    assert kinms_pa == pytest.approx(205.212, abs=2.0)
+    m_corr = re.search(r"preflight mom0 cross-corr\s*:\s*([0-9.]+)", log)
+    assert m_corr, "mom0 cross-corr in PA assertion block"
+    assert float(m_corr.group(1)) >= 0.9
+
+
 def test_mcmc_flux_seed_visibility_aligned(smoke_run):
     """MCMC flux seed must follow visibility audit, not mom0 (~92 Jy·km/s)."""
     log = smoke_run["log"]
@@ -182,16 +200,20 @@ def test_mcmc_flux_seed_visibility_aligned(smoke_run):
     assert lo <= 15.0, f"flux lower bound {lo} still mom0-scaled (expected ≤15)"
 
 
-def test_imaging_tight_priors_active(smoke_run):
+def test_frozen_imaging_geometry_five_free_params(smoke_run):
     log = smoke_run["log"]
-    assert "imaging-tight" in log, "imaging-tight bounds label not logged"
-    # vsys: ±50 km/s around the imaging seed
-    m = re.search(r"vsys:\s*\(([-\d.eE+]+),\s*([-\d.eE+]+)\)", log)
-    assert m, "vsys resolved bounds not logged"
-    lo, hi = float(m.group(1)), float(m.group(2))
-    assert hi - lo == pytest.approx(100.0, abs=1e-3), (
-        f"vsys span {hi - lo} != 100 km/s (±50 each side)"
+    assert "FROZEN IMAGING GEOMETRY" in log
+    assert re.search(
+        r"Freezing parameters \(MCMC dimensionality reduced from 10 to 5\)",
+        log,
+    ), "expected 5D MCMC after freezing pa/inc/vsys/dx/dy"
+    assert re.search(r"Spectral bin factor 4:", log), (
+        "visibility grid should use spectral_bin_factor=4 (~5 km/s)"
     )
+    m_vsys = re.search(r"vsys:\s*\(([-\d.eE+]+),\s*([-\d.eE+]+)\)", log)
+    assert m_vsys, "vsys resolved bounds not logged"
+    lo, hi = float(m_vsys.group(1)), float(m_vsys.group(2))
+    assert lo == hi, "vsys should be frozen (degenerate interval)"
 
 
 def test_preflight_outputs_present(smoke_run):
@@ -253,7 +275,9 @@ def test_log_contains_required_diagnostic_blocks(smoke_run):
         "PRIOR REFERENCE (imaging-derived recommendations):",
         "Applied --use-imaging-seeds:",
         "PREFLIGHT CUBE (KinMS inClouds vs observed):",
+        "PA PIPELINE ASSERTION — PASS",
         "FLUX AUDIT — MCMC recommendation",
+        "FROZEN IMAGING GEOMETRY",
         "BOUNDS — resolved MCMC box prior",
         "RESOLVED_MCMC_BOUNDS",
         "KinMS setup:",

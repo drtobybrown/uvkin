@@ -212,6 +212,22 @@ parser.add_argument(
     default=None,
     help="Directory for flux audit JSON (default: --outdir).",
 )
+parser.add_argument(
+    "--freeze-imaging-geometry",
+    dest="freeze_imaging_geometry",
+    action="store_true",
+    default=None,
+    help=(
+        "Freeze pa, inc, vsys, dx, dy at imaging seeds; MCMC fits "
+        "flux, gamma, vmax, gas_sigma, r_scale only. Requires --use-imaging-seeds."
+    ),
+)
+parser.add_argument(
+    "--no-freeze-imaging-geometry",
+    dest="freeze_imaging_geometry",
+    action="store_false",
+    help="Allow MCMC to explore pa, inc, vsys, dx, dy (overrides YAML freeze_imaging_geometry).",
+)
 
 args = parser.parse_args()
 
@@ -235,6 +251,11 @@ if args.kgas_id not in PIPE.galaxies:
         f"Unknown --kgas-id {args.kgas_id!r}; valid: {sorted(PIPE.galaxies)}"
     )
 _cfg = PIPE.galaxies[args.kgas_id]
+_freeze_imaging_geometry = (
+    args.freeze_imaging_geometry
+    if args.freeze_imaging_geometry is not None
+    else bool(getattr(_cfg, "freeze_imaging_geometry", False))
+)
 PA_INIT = _cfg.pa_init
 INC_INIT = _cfg.inc_init
 VSYS = args.vsys if args.vsys is not None else _cfg.vsys
@@ -294,7 +315,12 @@ from astropy.io import fits
 from astropy.wcs import WCS
 
 from empirical_bounds import BoundedGNFWKinMSModel
-from fit_bounds import format_resolved_empirical_bounds, get_empirical_bounds
+from fit_bounds import (
+    MCMC_FREE_WHEN_GEOMETRY_FROZEN,
+    format_resolved_empirical_bounds,
+    freeze_imaging_geometry_bounds,
+    get_empirical_bounds,
+)
 from spectral_windows import build_velocity_windows, compute_line_channel_mask
 from uv_aggregate import (
     average_time_steps,
@@ -336,6 +362,10 @@ from flux_audit_runner import (
     run_flux_audit_for_mcmc,
 )
 from visibility_audit import format_recommendation_log
+from imaging_geometry_checks import (
+    evaluate_pa_consistency,
+    format_pa_consistency_log,
+)
 
 PRECISION = "single"  # float32 / complex64 everywhere; single canonical contract
 
@@ -915,6 +945,27 @@ if _do_preflight_cube and _imaging_preflight_result is not None:
             "geometry (PA/inc) or centroid may be off.",
             _mom0_r,
         )
+
+    _pa_report = evaluate_pa_consistency(
+        kinms_pa_deg=_seeds.pa_deg,
+        catalog_pa_init_deg=float(_cfg.pa_init),
+        major_axis_pa_en_deg=_imaging_preflight_result.geometry_major_axis_pa_en_deg,
+        receding_pa_en_deg=_imaging_preflight_result.geometry_receding_pa_en_deg,
+        mom0_cross_corr=float(_mom0_r) if not np.isnan(_mom0_r) else None,
+    )
+    log.info("=" * 60)
+    for _line in format_pa_consistency_log(_pa_report).splitlines():
+        log.info("%s", _line)
+    if not _pa_report.passed:
+        log.warning(
+            "PA pipeline assertion failed — review moment PA vs catalogue and "
+            "preflight_inclouds/comparison.png before trusting MCMC on PA."
+        )
+    elif _freeze_imaging_geometry:
+        log.info(
+            "PA/inc/dx/dy/vsys frozen for MCMC at imaging seeds "
+            "(preflight validates morphology at native 30 km/s cubes)."
+        )
     log.info("=" * 60)
 elif args.write_preflight_cube is True:
     raise SystemExit(
@@ -1079,6 +1130,32 @@ empirical_bounds = get_empirical_bounds(
     gas_sigma_floor=_gas_sigma_floor,
     phase_centroid_seed_arcsec=_centroid_seed,
 )
+
+if _freeze_imaging_geometry and not args.use_imaging_seeds:
+    raise SystemExit(
+        "--freeze-imaging-geometry requires --use-imaging-seeds and imaging products."
+    )
+if _freeze_imaging_geometry:
+    empirical_bounds = freeze_imaging_geometry_bounds(
+        empirical_bounds,
+        pa_deg=PA_INIT,
+        inc_deg=INC_INIT,
+        vsys_kms=float(VSYS),
+        dx_arcsec=float(_centroid_seed[0]),
+        dy_arcsec=float(_centroid_seed[1]),
+    )
+    _bounds_label = f"{_bounds_label} + frozen imaging geometry"
+    log.info("=" * 60)
+    log.info(
+        "FROZEN IMAGING GEOMETRY — MCMC fits %s",
+        ", ".join(MCMC_FREE_WHEN_GEOMETRY_FROZEN),
+    )
+    log.info("  pa (deg)     : %.6f", PA_INIT)
+    log.info("  inc (deg)    : %.6f", INC_INIT)
+    log.info("  vsys (km/s)  : %.6f", VSYS)
+    log.info("  dx (arcsec)  : %.6f", _centroid_seed[0])
+    log.info("  dy (arcsec)  : %.6f", _centroid_seed[1])
+    log.info("=" * 60)
 
 log.info("=" * 60)
 log.info("BOUNDS — resolved MCMC box prior (%s, after gas_sigma floor)", _bounds_label)
