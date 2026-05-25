@@ -35,10 +35,19 @@ Top-level sections follow the runtime order:
 
 **Phase-centre precedence:** if `galaxies.<id>.phase_centroid_seed_arcsec` is set, it overrides `aggregation.default_phase_centroid_seed_arcsec`.
 
-**Open exploration profile:** use
-`--pipeline-settings config/uvkin_settings_open_explore.yaml` (wide priors,
-larger `initial_ball_fraction`). The seed-matrix helper accepts
-`--base-pipeline-settings` to materialize variants from the same catalogue.
+**Profiles:**
+
+- `config/uvkin_settings.yaml` — default narrow priors for production runs.
+- `config/uvkin_settings_open_explore.yaml` — wide priors and larger
+  `initial_ball_fraction` for exploration / convergence diagnosis.
+- `config/uvkin_settings_diagnose_30kms.yaml` — 30 km/s spectral binning with
+  **moment-tight box priors** baked into the YAML (PA/inc ±15°, vsys ±50 km/s,
+  flux/vmax/r_scale [0.25×, 4×], gas_sigma [10, 100] km/s, dx/dy ±2″). Pair
+  with `--use-imaging-seeds` (see “Moment-aligned KinMS setup” below) for the
+  full imaging-driven preflight + tightening.
+
+The seed-matrix helper accepts `--base-pipeline-settings` to materialize
+variants from the same catalogue.
 
 ## gNFW Kinematic Fitting
 
@@ -89,6 +98,75 @@ python run_kgas_full.py --data ... --outdir ... --kgas-id KGAS066 \
 # Override emcee initial ball without editing YAML (fraction of each box width, 0–1]
 python run_kgas_full.py --data ... --outdir ... --kgas-id KGAS066 --initial-ball-fraction 0.02
 ```
+
+### Moment-aligned KinMS setup (imaging seeds + preflight cube)
+
+When KILOGAS imaging products are available, `run_kgas_full.py` can (a) seed
+MCMC from the moment maps, (b) tighten the box priors around those seeds,
+and (c) generate a preflight `inClouds` cube with the observed cube’s WCS so
+you can verify the KinMS model matches the data **before** committing to a
+long MCMC.
+
+```bash
+python src/run_kgas_full.py \
+  --kgas-id KGAS066 \
+  --data /path/to/KILOGAS066.npz \
+  --outdir results/KGAS066 \
+  --pipeline-settings config/uvkin_settings_diagnose_30kms.yaml \
+  --imaging-cube /path/to/KGAS66_clipped_cube.fits \
+  --imaging-mom0 /path/to/KGAS66_Ico_K_kms-1.fits \
+  --imaging-mom1 /path/to/KGAS66_mom1.fits \
+  --imaging-mom2 /path/to/KGAS66_mom2.fits \
+  --use-imaging-seeds \
+  --converge --max-steps 80000 --check-interval 500
+```
+
+The `--imaging-*` CLI flags are optional when
+`galaxies.<id>.imaging_products` in the YAML already points to the same
+files (already configured for KGAS066 in `uvkin_settings_diagnose_30kms.yaml`).
+
+| Flag | Effect |
+|------|--------|
+| `--use-imaging-seeds` | Replace catalogue seeds with mom0/mom1/mom2-derived ones (pa, inc, vsys, vmax, r_scale, gas_sigma, dx, dy, flux). Fails fast if no imaging products are provided. |
+| `--imaging-tight-priors` (default on when seeded) | Tighten the box priors around the imaging seeds: PA/inc ±15°, vsys ±50 km/s, flux/vmax/r_scale [0.25×, 4×], gas_sigma [0.5×, 2×], dx/dy ±2″. |
+| `--no-imaging-tight-priors` | Keep YAML box priors even when seeding from imaging. |
+| `--write-preflight-cube` / `--no-preflight-cube` | Force on/off the preflight `inClouds` cube (auto-on when cube + mom0 + mom1 are all available). |
+| `--mom0-threshold` | Cloud-placement threshold as a fraction of the mom0 peak (default 0.05). |
+| `--max-clouds` | Cap on cloud count for the preflight cube (default 10000). |
+
+**Reference numbers (KGAS066, mirrored by the smoke test):** mom0
+integrated flux ≈ 91.77 Jy·km/s; preflight cube sim/obs flux ratio ≈ 0.97;
+mom0 cross-correlation ≈ 0.978; ~775 clouds at the default threshold.
+
+### Local pre-flight (before submitting on ARC)
+
+`scripts/run_local_tests.sh` runs the unit suite and an end-to-end KGAS066
+smoke (~75 s total). The smoke pipes a full `run_kgas_full.py` invocation
+with 32 walkers × 4 MCMC steps through the moment-aligned path and validates
+the reference numbers above plus every required diagnostic block in
+`run.log`.
+
+```bash
+scripts/run_local_tests.sh           # unit + smoke
+scripts/run_local_tests.sh --unit    # unit tests only
+scripts/run_local_tests.sh --smoke   # smoke only
+```
+
+The smoke (`tests/test_kgas066_local_smoke.py`) auto-skips when local data
+is missing. Either set the env overrides
+
+```bash
+export UVKIN_KGAS066_NPZ=/path/to/KILOGAS066.npz
+export UVKIN_KGAS066_IMAGING_DIR=/path/to/kgas066_imaging_dir
+```
+
+or place the files at the default locations:
+
+- `~/kilogas/DR1/visibilities/KILOGAS066.npz`
+- `~/kilogas/analysis/kinms_test/kgas066/KGAS66_clipped_cube.fits`
+- `~/kilogas/analysis/kinms_test/kgas066/KGAS66_Ico_K_kms-1.fits`
+- `~/kilogas/analysis/kinms_test/kgas066/KGAS66_mom1.fits`
+- `~/kilogas/analysis/kinms_test/kgas066/KGAS66_mom2.fits`
 
 ### Production run (CANFAR batch)
 
@@ -161,18 +239,32 @@ jupyter notebook plot_results.ipynb
 
 Results are saved per galaxy to `{outdir}/`:
 
-| File | Contents |
+| Path | Contents |
 |------|----------|
-| `result.npz` | MAP params, chi2, MCMC chains, autocorrelation time |
-| `bestfit_cube.fits` | Best-fit model cube (3D FITS + WCS; load with spectral-cube) |
+| `result.npz` | MAP params, chi2, MCMC chains, autocorrelation time, `imaging_preflight` payload |
+| `bestfit_cube.fits` | Best-fit model cube; inherits CRVAL/CDELT/CTYPE/RESTFRQ from the observed cube when one is supplied (BUNIT=Jy/beam) |
 | `run.log` | Full runtime log |
+| `diagnostics/` | `param_summary.txt`, `chain_traces.png`, `chain_marginals.png`, `prior_walls.png`, `corner_flux_gamma_vmax_rscale.png` |
+| `preflight_inclouds/` | `preflight_inclouds_simcube.fits` + `observed_cube.png`, `simulated_cube.png`, `comparison.png` (when imaging products + `--write-preflight-cube` apply) |
+| `bestfit_comparison/` | Observed vs best-fit moment & PV PNGs (only when the uvkin grid matches the observed cube footprint) |
+| `preflight_uv_hist2d.png`, `preflight_snr_profile.png` | UV-space preflight diagnostics |
 
 ### Reading `run.log`
 
-Major blocks are prefixed for scanning: **`CONFIG`** (echo of YAML + catalogue
-vs effective seeds + `initial_ball_fraction`), **`BOUNDS`** (numeric resolved
-MCMC box for every free parameter), preflight diagnostics, then **`MCMC`**
-(emcee settings, acceptance fraction, chain shape, τ when used).
+Major blocks are prefixed for scanning:
+
+- **`CONFIG`** — echo of YAML + catalogue vs effective seeds + `initial_ball_fraction`
+- **`GIT REVISIONS`** — uvkin / uvfit SHAs and dirty status
+- **`IMAGING PREFLIGHT — KILOGAS imaging products`** — beam, `nu_obs`, mom0/cube integrated flux, KinMS alignment, derived seeds
+- **`PRIOR REFERENCE`** — annotated mapping of which moments inform which prior
+- **`PREFLIGHT CUBE (KinMS inClouds vs observed)`** — cloud count, sim/obs flux ratio, mom0 cross-correlation, output PNG/FITS paths
+- **`BOUNDS — resolved MCMC box prior`** + `RESOLVED_MCMC_BOUNDS` — numeric box for every free parameter, with the active label (`imaging-tight (seeded from preflight)` or `YAML box priors (no imaging tightening)`)
+- **`PRE-FIT DIAGNOSTICS`** — incoherent line/off-line excess, `q_crit`, SNR
+- **`KinMS setup`** — dv, n_chan, vSys, intFlux/r_scale/vmax/gas_sigma seeds
+- **`Likelihood at seeds`** + **`Degeneracy probes`** — χ²/rχ² at perturbed seeds (flux×0.1/×10, vmax×0.5/×2, r_scale×0.5/×2, γ=0/1)
+- **`MCMC — emcee configuration`** — walkers, steps, burn-in, processes, acceptance fraction, chain shape, τ
+- **`Seed vs MAP parameters`** + **`Final prior wall fractions`** + **`Pearson r`** + **`CHAIN SUMMARY (post-burn)`** — per-parameter medians, ±1σ, MAP, wall fractions, key correlations
+- **`Best-fit cube saved with observed-WCS template`** — confirms the bestfit FITS inherits the observed cube’s WCS
 
 ## Prior seeding from imaging products
 
