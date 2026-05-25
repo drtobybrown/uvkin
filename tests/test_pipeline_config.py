@@ -67,6 +67,19 @@ def test_load_diagnose_30kms_settings():
     assert g66.imaging_products.mom0 is not None
     assert "KGAS66" in g66.imaging_products.mom0
     assert g66.imaging_products.channel_width_kms == pytest.approx(30.0)
+    # Moment-tight box priors must be baked into the YAML so that the YAML
+    # fallback (no --use-imaging-seeds) and the runtime tightening path agree.
+    mb = pipe.mcmc_bounds
+    assert mb.vsys_offset_kms == (-50.0, 50.0)
+    assert mb.gas_sigma == (10.0, 100.0)
+    assert mb.flux_multipliers == (0.5, 2.0)
+    assert mb.gamma == (0.0, 2.0)
+    assert mb.inc_half_width_deg == 15.0
+    assert mb.pa_half_width_deg == 15.0
+    assert mb.dx_half_width_arcsec == 2.0
+    assert mb.dy_half_width_arcsec == 2.0
+    assert mb.vmax_multipliers == (0.25, 4.0)
+    assert mb.r_scale_multipliers == (0.25, 4.0)
 
 
 def test_load_explicit_path():

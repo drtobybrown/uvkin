@@ -468,33 +468,34 @@ _imaging_paths = resolve_imaging_paths(
     cli_mom2=args.imaging_mom2,
 )
 if _imaging_paths is not None:
-    try:
-        _imaging_preflight_result = run_imaging_preflight(
-            _imaging_paths,
-            catalog_flux_jy_kms=float(_cfg.flux_int_jy_kms),
-            f_rest_hz=F_REST,
-            gas_sigma_floor_kms=1.0,
+    _imaging_preflight_result = run_imaging_preflight(
+        _imaging_paths,
+        catalog_flux_jy_kms=float(_cfg.flux_int_jy_kms),
+        f_rest_hz=F_REST,
+        gas_sigma_floor_kms=1.0,
+    )
+    if args.use_imaging_seeds and _imaging_preflight_result.seeds is not None:
+        _s = _imaging_preflight_result.seeds
+        PA_INIT = _s.pa_deg
+        INC_INIT = _s.inc_deg
+        VSYS = _s.vsys_kms
+        VMAX = _s.vmax_kms
+        R_SCALE = _s.r_scale_arcsec
+        GAS_SIGMA_INIT = _s.gas_sigma_kms
+        if args.line_width_kms is None:
+            LINE_WIDTH_KMS = _s.line_width_kms
+        if args.vsys is None:
+            VEL_BUFFER_EFFECTIVE = _s.vel_buffer_kms
+        log.info(
+            "Applied --use-imaging-seeds: vsys=%.3f vmax=%.3f r_scale=%.3f "
+            "pa=%.3f inc=%.3f gas_sigma=%.3f line_width=%.3f",
+            VSYS, VMAX, R_SCALE, PA_INIT, INC_INIT, GAS_SIGMA_INIT, LINE_WIDTH_KMS,
         )
-        if args.use_imaging_seeds and _imaging_preflight_result.seeds is not None:
-            _s = _imaging_preflight_result.seeds
-            PA_INIT = _s.pa_deg
-            INC_INIT = _s.inc_deg
-            VSYS = _s.vsys_kms
-            VMAX = _s.vmax_kms
-            R_SCALE = _s.r_scale_arcsec
-            GAS_SIGMA_INIT = _s.gas_sigma_kms
-            if args.line_width_kms is None:
-                LINE_WIDTH_KMS = _s.line_width_kms
-            if args.vsys is None:
-                VEL_BUFFER_EFFECTIVE = _s.vel_buffer_kms
-            log.info(
-                "Applied --use-imaging-seeds: vsys=%.3f vmax=%.3f r_scale=%.3f "
-                "pa=%.3f inc=%.3f gas_sigma=%.3f line_width=%.3f",
-                VSYS, VMAX, R_SCALE, PA_INIT, INC_INIT, GAS_SIGMA_INIT, LINE_WIDTH_KMS,
-            )
-    except (OSError, ValueError) as exc:
-        log.warning("Imaging preflight failed (continuing without): %s", exc)
-        _imaging_preflight_result = None
+elif args.use_imaging_seeds:
+    raise SystemExit(
+        "--use-imaging-seeds requested but no imaging products supplied via YAML "
+        "(galaxy.imaging_products) or CLI (--imaging-mom0/mom1/mom2/cube)."
+    )
 
 # ---------------------------------------------------------------------------
 # Load and trim data
@@ -776,34 +777,31 @@ else:
 
 # Full imaging preflight log (includes dv alignment after binning)
 if _imaging_paths is not None:
-    try:
-        if _imaging_preflight_result is None:
-            _imaging_preflight_result = run_imaging_preflight(
-                _imaging_paths,
-                catalog_flux_jy_kms=float(_cfg.flux_int_jy_kms),
-                f_rest_hz=F_REST,
-                fit_dv_kms=current_dv_kms,
-                gas_sigma_floor_kms=_gas_sigma_floor,
-            )
-        else:
-            _imaging_preflight_result.fit_dv_kms = current_dv_kms
-        log.info("=" * 60)
-        for _line in format_imaging_preflight_log(_imaging_preflight_result).splitlines():
-            log.info("%s", _line)
-        if _imaging_preflight_result.seeds is not None:
-            _s = _imaging_preflight_result.seeds
-            log.info(
-                "Seed vs catalog deltas: d_vsys=%+.2f d_vmax=%+.2f d_r_scale=%+.2f "
-                "d_pa=%+.2f d_inc=%+.2f",
-                _s.vsys_kms - float(_cfg.vsys),
-                _s.vmax_kms - float(_cfg.vmax_seed_kms or VMAX),
-                _s.r_scale_arcsec - float(_cfg.r_scale),
-                _s.pa_deg - float(_cfg.pa_init),
-                _s.inc_deg - float(_cfg.inc_init),
-            )
-        log.info("=" * 60)
-    except (OSError, ValueError) as exc:
-        log.warning("Imaging preflight (post-bin) failed: %s", exc)
+    if _imaging_preflight_result is None:
+        _imaging_preflight_result = run_imaging_preflight(
+            _imaging_paths,
+            catalog_flux_jy_kms=float(_cfg.flux_int_jy_kms),
+            f_rest_hz=F_REST,
+            fit_dv_kms=current_dv_kms,
+            gas_sigma_floor_kms=_gas_sigma_floor,
+        )
+    else:
+        _imaging_preflight_result.fit_dv_kms = current_dv_kms
+    log.info("=" * 60)
+    for _line in format_imaging_preflight_log(_imaging_preflight_result).splitlines():
+        log.info("%s", _line)
+    if _imaging_preflight_result.seeds is not None:
+        _s = _imaging_preflight_result.seeds
+        log.info(
+            "Seed vs catalog deltas: d_vsys=%+.2f d_vmax=%+.2f d_r_scale=%+.2f "
+            "d_pa=%+.2f d_inc=%+.2f",
+            _s.vsys_kms - float(_cfg.vsys),
+            _s.vmax_kms - float(_cfg.vmax_seed_kms or VMAX),
+            _s.r_scale_arcsec - float(_cfg.r_scale),
+            _s.pa_deg - float(_cfg.pa_init),
+            _s.inc_deg - float(_cfg.inc_init),
+        )
+    log.info("=" * 60)
 
 # Preflight inClouds cube + observed/sim/comparison PNGs (image-space validation
 # of the moment-aligned KinMS setup before MCMC starts).
@@ -823,121 +821,127 @@ _do_preflight_cube = (
 )
 moment_priors_obj = None  # MomentPriors | None set below when preflight cube is built
 if _do_preflight_cube and _imaging_preflight_result is not None:
-    try:
-        _mom0_arr, _wcs2d_mom0 = load_moment_fits(_imaging_paths.mom0)
-        _mom1_arr, _ = load_moment_fits(_imaging_paths.mom1)
-        _mom0_hdr = fits.getheader(_imaging_paths.mom0)
-        _cube_hdr = fits.getheader(_imaging_paths.cube)
+    _mom0_arr, _wcs2d_mom0 = load_moment_fits(_imaging_paths.mom0)
+    _mom1_arr, _ = load_moment_fits(_imaging_paths.mom1)
+    _mom0_hdr = fits.getheader(_imaging_paths.mom0)
+    _cube_hdr = fits.getheader(_imaging_paths.cube)
 
-        _seeds = _imaging_preflight_result.seeds
-        if _seeds is None:
-            raise ValueError("imaging preflight returned no seeds; cannot build preflight cube")
-
-        _bmaj_arcsec = _imaging_preflight_result.beam_bmaj_arcsec or 0.0
-        _bmin_arcsec = _imaging_preflight_result.beam_bmin_arcsec or 0.0
-        if _bmaj_arcsec <= 0.0 or _bmin_arcsec <= 0.0:
-            _bmaj_arcsec = float(_cube_hdr.get("BMAJ", 0.0)) * 3600.0
-            _bmin_arcsec = float(_cube_hdr.get("BMIN", 0.0)) * 3600.0
-
-        moment_priors_obj = build_moment_priors(
-            mom0=_mom0_arr,
-            mom0_header=_mom0_hdr,
-            cube_header=_cube_hdr,
-            geom_pa_deg=_seeds.pa_deg,
-            geom_inc_deg=_seeds.inc_deg,
-            scalerad_arcsec=_seeds.r_scale_arcsec,
-            intflux_jy_kms=(
-                _imaging_preflight_result.flux_int_mom0_jy_kms
-                or _imaging_preflight_result.flux_int_cube_jy_kms
-                or float(_cfg.flux_int_jy_kms)
-            ),
-            gas_sigma_int_kms=_seeds.gas_sigma_kms,
-            gas_sigma_obs_kms=_seeds.gas_sigma_kms,
-            vmax_kms=_seeds.vmax_kms,
-            vsys_kms=_seeds.vsys_kms,
-            vel_buffer_kms=_seeds.vel_buffer_kms,
-            line_half_width_kms=0.5 * _seeds.line_width_kms,
-            bmaj_arcsec=_bmaj_arcsec,
-            bmin_arcsec=_bmin_arcsec,
-            nu_obs_hz=_imaging_preflight_result.nu_hz,
-            match_obs_channels=True,
-        )
-        _inclouds = build_inclouds_from_moments(
-            mom0=_mom0_arr,
-            mom1=_mom1_arr,
-            wcs2d=_wcs2d_mom0,
-            vsys_kms=_seeds.vsys_kms,
-            threshold_frac=args.mom0_threshold,
-            max_clouds=args.max_clouds,
-        )
-        _sim_cube = make_cube_inclouds(
-            moment_priors_obj,
-            _inclouds,
-            cube_path=_imaging_paths.cube,
+    _seeds = _imaging_preflight_result.seeds
+    if _seeds is None:
+        raise RuntimeError(
+            "preflight cube requested but imaging preflight returned no seeds "
+            "(mom1 likely missing); add mom1 FITS or pass --no-preflight-cube"
         )
 
-        _preflight_dir = outdir / "preflight_inclouds"
-        _preflight_dir.mkdir(parents=True, exist_ok=True)
-        write_simcube_fits(
-            _sim_cube,
-            obs_cube_path=_imaging_paths.cube,
-            output_path=_preflight_dir / "preflight_inclouds_simcube.fits",
-            bunit="Jy/beam",
-        )
+    _bmaj_arcsec = _imaging_preflight_result.beam_bmaj_arcsec or 0.0
+    _bmin_arcsec = _imaging_preflight_result.beam_bmin_arcsec or 0.0
+    if _bmaj_arcsec <= 0.0 or _bmin_arcsec <= 0.0:
+        _bmaj_arcsec = float(_cube_hdr["BMAJ"]) * 3600.0
+        _bmin_arcsec = float(_cube_hdr["BMIN"]) * 3600.0
 
-        from kinms_grid import load_observed_cube_for_plot as _load_obs_for_plot
-
-        _obs_cube_xync, _obs_hdr_plot = _load_obs_for_plot(_imaging_paths.cube)
-        _pngs = save_cube_comparison_plots(
-            obs_cube=_obs_cube_xync,
-            obs_header=_obs_hdr_plot,
-            sim_cube=_sim_cube,
-            priors=moment_priors_obj,
-            plot_dir=_preflight_dir,
-        )
-
-        _flux_obs_jy_kms = integrated_flux_jy_kms(
-            _obs_cube_xync, _obs_hdr_plot, bunit=str(_obs_hdr_plot.get("BUNIT", "K"))
-        )
-        _flux_sim_jy_kms = integrated_flux_jy_kms(
-            _sim_cube, _obs_hdr_plot, bunit="Jy/beam"
-        )
-        _flux_ratio = (
-            _flux_sim_jy_kms / _flux_obs_jy_kms if _flux_obs_jy_kms != 0 else float("nan")
-        )
-        _mom0_r = mom0_cross_correlation(_obs_cube_xync, _obs_hdr_plot, _sim_cube)
-
-        log.info("=" * 60)
-        log.info("PREFLIGHT CUBE (KinMS inClouds vs observed):")
-        log.info("  n_clouds           = %d", _inclouds.n_clouds)
-        log.info("  mom0 threshold     = %.4g K km/s (frac %.2f of peak retained)",
-                 _inclouds.threshold_kkms, _inclouds.flux_fraction)
-        log.info("  flux observed      = %.4f Jy km/s", _flux_obs_jy_kms)
-        log.info("  flux simulated     = %.4f Jy km/s (ratio %.3f)",
-                 _flux_sim_jy_kms, _flux_ratio)
-        log.info("  mom0 cross-corr    = %.4f", _mom0_r)
-        for _p in _pngs:
-            log.info("  PNG: %s", _p)
-        if not (0.85 <= _flux_ratio <= 1.15):
-            log.warning(
-                "Preflight cube flux ratio %.3f outside [0.85, 1.15]; "
-                "check intFlux, beam, or mom0 threshold.",
-                _flux_ratio,
-            )
-        if not (np.isnan(_mom0_r) or _mom0_r >= 0.9):
-            log.warning(
-                "Preflight cube mom0 cross-corr %.3f < 0.9; "
-                "geometry (PA/inc) or centroid may be off.",
-                _mom0_r,
-            )
-        log.info("=" * 60)
-    except (OSError, ValueError, KeyError) as exc:
-        log.warning("Preflight inClouds cube generation failed: %s", exc)
-        moment_priors_obj = None
-elif args.write_preflight_cube is True:
-    log.warning(
-        "--write-preflight-cube requested but imaging cube/mom0/mom1 unavailable; skipping"
+    moment_priors_obj = build_moment_priors(
+        mom0=_mom0_arr,
+        mom0_header=_mom0_hdr,
+        cube_header=_cube_hdr,
+        geom_pa_deg=_seeds.pa_deg,
+        geom_inc_deg=_seeds.inc_deg,
+        scalerad_arcsec=_seeds.r_scale_arcsec,
+        intflux_jy_kms=(
+            _imaging_preflight_result.flux_int_mom0_jy_kms
+            or _imaging_preflight_result.flux_int_cube_jy_kms
+            or float(_cfg.flux_int_jy_kms)
+        ),
+        gas_sigma_int_kms=_seeds.gas_sigma_kms,
+        gas_sigma_obs_kms=_seeds.gas_sigma_kms,
+        vmax_kms=_seeds.vmax_kms,
+        vsys_kms=_seeds.vsys_kms,
+        vel_buffer_kms=_seeds.vel_buffer_kms,
+        line_half_width_kms=0.5 * _seeds.line_width_kms,
+        bmaj_arcsec=_bmaj_arcsec,
+        bmin_arcsec=_bmin_arcsec,
+        nu_obs_hz=_imaging_preflight_result.nu_hz,
+        match_obs_channels=True,
     )
+    _inclouds = build_inclouds_from_moments(
+        mom0=_mom0_arr,
+        mom1=_mom1_arr,
+        wcs2d=_wcs2d_mom0,
+        vsys_kms=_seeds.vsys_kms,
+        threshold_frac=args.mom0_threshold,
+        max_clouds=args.max_clouds,
+    )
+    _sim_cube = make_cube_inclouds(
+        moment_priors_obj,
+        _inclouds,
+        cube_path=_imaging_paths.cube,
+    )
+
+    _preflight_dir = outdir / "preflight_inclouds"
+    _preflight_dir.mkdir(parents=True, exist_ok=True)
+    write_simcube_fits(
+        _sim_cube,
+        obs_cube_path=_imaging_paths.cube,
+        output_path=_preflight_dir / "preflight_inclouds_simcube.fits",
+        bunit="Jy/beam",
+    )
+
+    from kinms_grid import load_observed_cube_for_plot as _load_obs_for_plot
+
+    _obs_cube_xync, _obs_hdr_plot = _load_obs_for_plot(_imaging_paths.cube)
+    _pngs = save_cube_comparison_plots(
+        obs_cube=_obs_cube_xync,
+        obs_header=_obs_hdr_plot,
+        sim_cube=_sim_cube,
+        priors=moment_priors_obj,
+        plot_dir=_preflight_dir,
+    )
+
+    _flux_obs_jy_kms = integrated_flux_jy_kms(
+        _obs_cube_xync, _obs_hdr_plot, bunit=str(_obs_hdr_plot.get("BUNIT", "K"))
+    )
+    _flux_sim_jy_kms = integrated_flux_jy_kms(
+        _sim_cube, _obs_hdr_plot, bunit="Jy/beam"
+    )
+    _flux_ratio = (
+        _flux_sim_jy_kms / _flux_obs_jy_kms if _flux_obs_jy_kms != 0 else float("nan")
+    )
+    _mom0_r = mom0_cross_correlation(_obs_cube_xync, _obs_hdr_plot, _sim_cube)
+
+    log.info("=" * 60)
+    log.info("PREFLIGHT CUBE (KinMS inClouds vs observed):")
+    log.info("  cube template      : %s", _imaging_paths.cube)
+    log.info("  cube shape         : %s (nx, ny, nchan)", _sim_cube.shape)
+    log.info("  mom0 threshold_frac= %.4f (peak fraction)", float(args.mom0_threshold))
+    log.info("  n_clouds           = %d", _inclouds.n_clouds)
+    log.info("  mom0 threshold     = %.4g K km/s (frac %.2f of peak retained)",
+             _inclouds.threshold_kkms, _inclouds.flux_fraction)
+    log.info("  flux observed      = %.4f Jy km/s", _flux_obs_jy_kms)
+    log.info("  flux simulated     = %.4f Jy km/s (ratio sim/obs = %.3f)",
+             _flux_sim_jy_kms, _flux_ratio)
+    log.info("  mom0 cross-corr    = %.4f", _mom0_r)
+    for _p in _pngs:
+        log.info("  PNG: %s", _p)
+    log.info("  FITS: %s", _preflight_dir / "preflight_inclouds_simcube.fits")
+    if not (0.85 <= _flux_ratio <= 1.15):
+        log.warning(
+            "Preflight cube flux ratio %.3f outside [0.85, 1.15]; "
+            "check intFlux, beam, or mom0 threshold.",
+            _flux_ratio,
+        )
+    if not (np.isnan(_mom0_r) or _mom0_r >= 0.9):
+        log.warning(
+            "Preflight cube mom0 cross-corr %.3f < 0.9; "
+            "geometry (PA/inc) or centroid may be off.",
+            _mom0_r,
+        )
+    log.info("=" * 60)
+elif args.write_preflight_cube is True:
+    raise SystemExit(
+        "--write-preflight-cube requested but imaging cube/mom0/mom1 not all "
+        "available (need cube + mom0 + mom1)."
+    )
+elif _do_preflight_cube:
+    log.info("Skipping preflight inClouds cube: imaging products incomplete.")
 
 if abs(current_dv_kms - _cfg.channel_width_kms) > 0.01:
     log.warning(
@@ -1527,71 +1531,67 @@ if result_mcmc.chains is not None and not args.no_mcmc_diagnostics:
 
 best_cube = model.generate_cube(result_mcmc.params)
 cube_fits_path = outdir / "bestfit_cube.fits"
-_wrote_bestfit_with_obs_wcs = False
 if (
     _imaging_paths is not None
     and _imaging_paths.cube is not None
     and _imaging_paths.cube.is_file()
 ):
-    try:
-        _best_cube_xync = np.transpose(np.asarray(best_cube), (2, 1, 0))
-        write_simcube_fits(
-            _best_cube_xync,
-            obs_cube_path=_imaging_paths.cube,
-            output_path=cube_fits_path,
-            bunit="Jy/beam",
-        )
-        _wrote_bestfit_with_obs_wcs = True
-        log.info("Best-fit cube saved with observed-WCS template to %s", cube_fits_path)
+    _best_cube_xync = np.transpose(np.asarray(best_cube), (2, 1, 0))
+    write_simcube_fits(
+        _best_cube_xync,
+        obs_cube_path=_imaging_paths.cube,
+        output_path=cube_fits_path,
+        bunit="Jy/beam",
+    )
+    log.info(
+        "Best-fit cube saved with observed-WCS template (BUNIT=Jy/beam) to %s",
+        cube_fits_path,
+    )
 
-        if moment_priors_obj is not None:
-            try:
-                from kinms_grid import load_observed_cube_for_plot as _load_obs
+    if moment_priors_obj is not None:
+        from kinms_grid import load_observed_cube_for_plot as _load_obs
 
-                _obs_xync, _obs_hdr_best = _load_obs(_imaging_paths.cube)
-                if _obs_xync.shape[:2] != _best_cube_xync.shape[:2]:
-                    log.info(
-                        "Skipping best-fit comparison PNGs: model grid %s differs "
-                        "from observed cube %s (uvkin shared.nx/ny vs cube NAXIS1/2). "
-                        "Match shared.cellsize_arcsec × nx/ny to the observed cube "
-                        "footprint to enable side-by-side plotting.",
-                        _best_cube_xync.shape[:2],
-                        _obs_xync.shape[:2],
-                    )
-                else:
-                    _bestfit_plot_dir = outdir / "bestfit_comparison"
-                    _bestfit_pngs = save_cube_comparison_plots(
-                        obs_cube=_obs_xync,
-                        obs_header=_obs_hdr_best,
-                        sim_cube=_best_cube_xync,
-                        priors=moment_priors_obj,
-                        plot_dir=_bestfit_plot_dir,
-                    )
-                    for _p in _bestfit_pngs:
-                        log.info("Best-fit comparison PNG: %s", _p)
-            except (OSError, ValueError, KeyError) as exc:
-                log.warning("Best-fit comparison plotting failed: %s", exc)
-    except (OSError, ValueError, KeyError) as exc:
-        log.warning(
-            "write_simcube_fits failed (%s); falling back to legacy WCS template", exc
+        _obs_xync, _obs_hdr_best = _load_obs(_imaging_paths.cube)
+        if _obs_xync.shape[:2] != _best_cube_xync.shape[:2]:
+            log.info(
+                "Skipping best-fit comparison PNGs: model grid %s differs "
+                "from observed cube %s (uvkin shared.nx/ny vs cube NAXIS1/2). "
+                "Match shared.cellsize_arcsec × nx/ny to the observed cube "
+                "footprint to enable side-by-side plotting.",
+                _best_cube_xync.shape[:2],
+                _obs_xync.shape[:2],
+            )
+        else:
+            _bestfit_plot_dir = outdir / "bestfit_comparison"
+            _bestfit_pngs = save_cube_comparison_plots(
+                obs_cube=_obs_xync,
+                obs_header=_obs_hdr_best,
+                sim_cube=_best_cube_xync,
+                priors=moment_priors_obj,
+                plot_dir=_bestfit_plot_dir,
+            )
+            for _p in _bestfit_pngs:
+                log.info("Best-fit comparison PNG: %s", _p)
+    else:
+        log.info(
+            "Best-fit comparison PNGs skipped: moment_priors_obj unavailable "
+            "(no preflight cube ran; pass --write-preflight-cube to enable)."
         )
-
-if not _wrote_bestfit_with_obs_wcs:
-    try:
-        write_bestfit_cube_fits(
-            cube_fits_path,
-            best_cube,
-            vel_trim,
-            cellsize_arcsec=CELLSIZE,
-            f_rest_hz=F_REST,
-            ra_deg=phase_ra_deg,
-            dec_deg=phase_dec_deg,
-            specsys=specsys_cube,
-            radesys="ICRS",
-        )
-    except OSError as exc:
-        log.error("Failed to write %s: %s", cube_fits_path, exc)
-        raise
-    log.info("Best-fit cube saved to %s", cube_fits_path)
+else:
+    write_bestfit_cube_fits(
+        cube_fits_path,
+        best_cube,
+        vel_trim,
+        cellsize_arcsec=CELLSIZE,
+        f_rest_hz=F_REST,
+        ra_deg=phase_ra_deg,
+        dec_deg=phase_dec_deg,
+        specsys=specsys_cube,
+        radesys="ICRS",
+    )
+    log.info(
+        "Best-fit cube saved with synthesised WCS (no imaging cube template) to %s",
+        cube_fits_path,
+    )
 
 log.info("Total wall time: %.1f min", (time.time() - RUN_T0) / 60.0)
