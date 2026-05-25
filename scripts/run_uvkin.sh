@@ -20,6 +20,12 @@
 # Optional:
 #   --scratch-root DIR     default: ${SCRATCH:-/scratch}
 #   --keep-workdir         do not rm -rf the scratch workdir after sync (debug)
+#
+# Flags forwarded to run_kgas_full.py (examples):
+#   --use-imaging-seeds              seed PA/inc/vsys/vmax/r_scale/flux from moment maps
+#   --imaging-mom0 PATH ...          override imaging product paths from YAML
+#   --no-preflight-plots             skip preflight_uv_hist2d.png / preflight_snr_profile.png
+#   --no-mcmc-diagnostics            skip outdir/diagnostics/ chain summary plots
 
 set -euo pipefail
 
@@ -55,7 +61,10 @@ Optional:
   --n-walkers N --n-processes N --check-interval N --max-steps N
   --converge              pass --converge to run_kgas_full.py
   --keep-workdir          keep scratch tree after successful rsync (debug)
-  Any other flag is forwarded to run_kgas_full.py (e.g. --no-preflight-plots).
+  Any other flag is forwarded to run_kgas_full.py, e.g.:
+    --use-imaging-seeds
+    --imaging-cube PATH --imaging-mom0 PATH --imaging-mom1 PATH --imaging-mom2 PATH
+    --no-preflight-plots --no-mcmc-diagnostics
 EOF
     exit 2
 }
