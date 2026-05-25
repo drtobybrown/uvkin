@@ -10,7 +10,7 @@
 #                              by default (see --no-imaging-tight-priors to
 #                              disable). Tight priors: pa/inc ±15°, vsys ±50
 #                              km/s, flux/vmax/r_scale [0.25×, 4×] of seed,
-#                              gas_sigma [0.5×, 2×] of seed, dx/dy ±2".
+#                              gas_sigma [dv_floor, 50] km/s, dx/dy ±2".
 #   --write-preflight-cube     Build a KinMS inClouds cube from moment maps,
 #                              write Jy/beam FITS on the observed WCS
 #                              template, and save observed/simulated/
@@ -86,7 +86,7 @@ aggregation:
 #
 #   pa, inc  : ±15° around catalogue seed (PA wraps; inc clamped to [0, 90])
 #   vsys     : catalogue ± 50 km/s
-#   gas_sigma: [dv_floor, 100] km/s (lower bound floored to current binned dv)
+#   gas_sigma: [dv_floor, 50] km/s (lower bound floored to current binned dv)
 #   flux     : [0.5×, 2×] of imaging-derived integrated Jy·km/s (catalogue seed
 #              if no imaging products available)
 #   gamma    : full prior [0, 2]
@@ -95,7 +95,7 @@ aggregation:
 #   dx, dy   : ±2" around centroid seed
 mcmc_bounds:
   vsys_offset_kms: [-50.0, 50.0]
-  gas_sigma: [10.0, 100.0]
+  gas_sigma: [10.0, 50.0]
   flux_multipliers: [0.5, 2.0]
   gamma: [0.0, 2.0]
   inc_half_width_deg: 15.0

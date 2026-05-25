@@ -68,7 +68,7 @@ aggregation:
 
 mcmc_bounds:
   vsys_offset_kms: [-50.0, 50.0]
-  gas_sigma: [5.0, 100.0]
+  gas_sigma: [5.0, 50.0]
   flux_multipliers: [0.5, 2.0]
   gamma: [0.0, 2.0]
   inc_half_width_deg: 15.0

@@ -8,6 +8,19 @@ from __future__ import annotations
 
 from config_schema import McmcBoundsConfig
 
+# Upper cap for line-of-sight dispersion priors (km/s); lower bound is the binned dv floor.
+GAS_SIGMA_MCMC_HI_KMS = 50.0
+
+
+def gas_sigma_prior_interval(
+    channel_floor_kms: float,
+    hi_kms: float = GAS_SIGMA_MCMC_HI_KMS,
+) -> tuple[float, float]:
+    """Box prior for ``gas_sigma``: ``[channel_floor, hi]`` with ``lo < hi``."""
+    lo = float(channel_floor_kms)
+    hi = max(float(hi_kms), lo + 1.0)
+    return (lo, hi)
+
 
 def format_resolved_empirical_bounds(bounds: dict[str, tuple[float, float]]) -> str:
     """Multi-line block for ``run.log``: one resolved interval per free parameter."""

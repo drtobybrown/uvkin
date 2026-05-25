@@ -42,7 +42,7 @@ Top-level sections follow the runtime order:
   `initial_ball_fraction` for exploration / convergence diagnosis.
 - `config/uvkin_settings_diagnose_30kms.yaml` — 30 km/s spectral binning with
   **moment-tight box priors** baked into the YAML (PA/inc ±15°, vsys ±50 km/s,
-  flux/vmax/r_scale [0.25×, 4×], gas_sigma [10, 100] km/s, dx/dy ±2″). Pair
+  flux/vmax/r_scale [0.25×, 4×], gas_sigma [dv_floor, 50] km/s, dx/dy ±2″). Pair
   with `--use-imaging-seeds` (see “Moment-aligned KinMS setup” below) for the
   full imaging-driven preflight + tightening.
 - `config/uvkin_settings_diagnose_5kms_frozen.yaml` — **~5 km/s** visibility
@@ -133,7 +133,7 @@ files (already configured for KGAS066 in `uvkin_settings_diagnose_30kms.yaml`).
 | Flag | Effect |
 |------|--------|
 | `--use-imaging-seeds` | Replace catalogue seeds with mom0/mom1/mom2-derived ones (pa, inc, vsys, vmax, r_scale, gas_sigma, dx, dy, flux). Fails fast if no imaging products are provided. |
-| `--imaging-tight-priors` (default on when seeded) | Tighten the box priors around the imaging seeds: PA/inc ±15°, vsys ±50 km/s, flux/vmax/r_scale [0.25×, 4×], gas_sigma [0.5×, 2×], dx/dy ±2″. |
+| `--imaging-tight-priors` (default on when seeded) | Tighten the box priors around the imaging seeds: PA/inc ±15°, vsys ±50 km/s, flux/vmax/r_scale [0.25×, 4×], gas_sigma [dv_floor, 50] km/s, dx/dy ±2″. |
 | `--no-imaging-tight-priors` | Keep YAML box priors even when seeding from imaging. |
 | `--write-preflight-cube` / `--no-preflight-cube` | Force on/off the preflight `inClouds` cube (auto-on when cube + mom0 + mom1 are all available). |
 | `--mom0-threshold` | Cloud-placement threshold as a fraction of the mom0 peak. **Default 0.0** — KILOGAS DR1 mom0 maps are already SNR-masked (off-mask = NaN), so every finite positive pixel becomes a cloud. Set to e.g. 0.05 to re-threshold un-masked input. |

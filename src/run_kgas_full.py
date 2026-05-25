@@ -157,7 +157,7 @@ parser.add_argument(
     default=None,
     help=(
         "Tighten box priors around imaging seeds (pa/inc ±15°, vsys ±50 km/s, "
-        "flux/vmax/r_scale [0.25×, 4×] of seed, gas_sigma [0.5×, 2×] of seed, "
+        "flux/vmax/r_scale [0.25×, 4×] of seed, gas_sigma [dv_floor, 50] km/s, "
         "dx/dy ±2\"). Default: on when --use-imaging-seeds and seeds are available."
     ),
 )
@@ -316,9 +316,11 @@ from astropy.wcs import WCS
 
 from empirical_bounds import BoundedGNFWKinMSModel
 from fit_bounds import (
+    GAS_SIGMA_MCMC_HI_KMS,
     MCMC_FREE_WHEN_GEOMETRY_FROZEN,
     format_resolved_empirical_bounds,
     freeze_imaging_geometry_bounds,
+    gas_sigma_prior_interval,
     get_empirical_bounds,
 )
 from spectral_windows import build_velocity_windows, compute_line_channel_mask
@@ -1086,10 +1088,9 @@ _tighten_priors = (
 )
 if _tighten_priors:
     _s_tight = _imaging_preflight_result.seeds
-    _gas_seed = max(float(_s_tight.gas_sigma_kms), float(_gas_sigma_floor))
     _mcmc_bounds_active = type(PIPE.mcmc_bounds)(
         vsys_offset_kms=(-50.0, 50.0),
-        gas_sigma=(max(0.5 * _gas_seed, _gas_sigma_floor), max(2.0 * _gas_seed, _gas_sigma_floor + 1.0)),
+        gas_sigma=gas_sigma_prior_interval(_gas_sigma_floor, GAS_SIGMA_MCMC_HI_KMS),
         flux_multipliers=(0.5, 2.0),
         gamma=PIPE.mcmc_bounds.gamma,
         inc_half_width_deg=15.0,

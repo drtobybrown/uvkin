@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import pytest
 
 from config_schema import McmcBoundsConfig
-from fit_bounds import get_empirical_bounds
+from fit_bounds import GAS_SIGMA_MCMC_HI_KMS, gas_sigma_prior_interval, get_empirical_bounds
 
 
 @dataclass
@@ -46,10 +46,9 @@ def _baseline_bounds() -> McmcBoundsConfig:
 
 def _imaging_tight_bounds(seeds: _Seeds, gas_floor: float) -> McmcBoundsConfig:
     """Mirror the tightening logic from run_kgas_full.py."""
-    gas_seed = max(seeds.gas_sigma_kms, gas_floor)
     return McmcBoundsConfig(
         vsys_offset_kms=(-50.0, 50.0),
-        gas_sigma=(max(0.5 * gas_seed, gas_floor), max(2.0 * gas_seed, gas_floor + 1.0)),
+        gas_sigma=gas_sigma_prior_interval(gas_floor, GAS_SIGMA_MCMC_HI_KMS),
         flux_multipliers=(0.5, 2.0),
         gamma=(0.0, 2.0),
         inc_half_width_deg=15.0,
@@ -105,8 +104,8 @@ def test_imaging_tight_priors_resolution():
     # dx/dy: ±2 arcsec
     assert bounds["dx"] == pytest.approx((-1.9, 2.1), abs=1e-6)
     assert bounds["dy"] == pytest.approx((-2.2, 1.8), abs=1e-6)
-    # gas_sigma floored
-    assert bounds["gas_sigma"][0] == pytest.approx(gas_floor, abs=1e-6)
+    # gas_sigma: channel floor to 50 km/s (not 0.5×–2× seed)
+    assert bounds["gas_sigma"] == pytest.approx((gas_floor, GAS_SIGMA_MCMC_HI_KMS), abs=1e-6)
 
 
 def test_imaging_tight_priors_much_narrower_than_baseline():
