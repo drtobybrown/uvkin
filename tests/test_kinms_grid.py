@@ -105,6 +105,31 @@ def test_kinms_alignment_phase_offset_when_crpix_off_centre():
     assert aln["phaseCent"][1] == pytest.approx(0.0, abs=1e-6)
 
 
+def test_build_inclouds_default_threshold_keeps_all_snr_mask_pixels():
+    """KILOGAS DR1 mom0 maps are already SNR-masked → default threshold_frac=0.0
+    must keep every finite positive pixel (off-mask = NaN) and apply no extra
+    noise floor."""
+    nx, ny = 16, 16
+    mom0 = np.full((ny, nx), np.nan, dtype=np.float64)
+    mom1 = np.full((ny, nx), np.nan, dtype=np.float64)
+    rng = np.random.default_rng(1)
+    snr_mask = np.zeros_like(mom0, dtype=bool)
+    snr_mask[4:12, 4:12] = True
+    mom0[snr_mask] = rng.uniform(0.5, 100.0, size=snr_mask.sum())
+    mom1[snr_mask] = rng.uniform(8280.0, 8290.0, size=snr_mask.sum())
+    w = WCS(naxis=2)
+    w.wcs.crpix = [8.0, 8.0]
+    w.wcs.crval = [199.0, -1.0]
+    w.wcs.cdelt = [-0.4 / 3600.0, 0.4 / 3600.0]
+    w.wcs.ctype = ["RA---SIN", "DEC--SIN"]
+    w.wcs.cunit = ["deg", "deg"]
+
+    build = build_inclouds_from_moments(mom0=mom0, mom1=mom1, wcs2d=w, vsys_kms=8285.0)
+    assert build.n_clouds == int(snr_mask.sum())
+    assert build.threshold_kkms == pytest.approx(0.0, abs=1e-12)
+    assert build.flux_fraction == pytest.approx(1.0, rel=1e-12)
+
+
 def test_build_inclouds_cloud_at_crpix_maps_to_origin():
     """Regression: a bright pixel exactly at CRPIX must map to (0, 0)."""
     nx, ny = 32, 32

@@ -223,7 +223,7 @@ def build_inclouds_from_moments(
     mom1: np.ndarray,
     wcs2d: WCS,
     vsys_kms: float,
-    threshold_frac: float = 0.05,
+    threshold_frac: float = 0.0,
     max_clouds: int | None = None,
     seed: int = 42,
 ) -> InCloudsBuild:
@@ -233,19 +233,25 @@ def build_inclouds_from_moments(
     matches the observed cube WCS (see ``kinms_test/README.md`` Issue 2). The
     ``_plane_offsets_arcsec`` median-centred helper in ``prior_seed.py`` is
     inappropriate here and must not be used.
+
+    KILOGAS DR1 mom0 products are already SNR-masked (off-mask pixels are NaN),
+    so by default every finite positive pixel becomes a cloud. Set
+    ``threshold_frac > 0`` to re-threshold un-masked input as a fraction of the
+    mom0 peak (e.g. 0.05 for ~3σ relative cleaning).
     """
     m0 = np.asarray(mom0, dtype=np.float64)
     m1 = np.asarray(mom1, dtype=np.float64)
     peak = float(np.nanmax(m0))
-    positive = m0[np.isfinite(m0) & (m0 > 0)]
-    if positive.size == 0:
-        raise ValueError("moment0 has no finite positive pixels")
-    robust_rms = float(np.median(positive[positive <= np.percentile(positive, 25)]))
-    threshold = max(threshold_frac * peak, 3.0 * robust_rms)
+    if not np.isfinite(peak):
+        raise ValueError("moment0 has no finite pixels")
+    threshold = float(threshold_frac) * peak
 
     mask = np.isfinite(m0) & np.isfinite(m1) & (m0 > threshold)
     if not np.any(mask):
-        raise ValueError(f"No pixels above mom0 threshold {threshold:.3g} K km/s")
+        raise ValueError(
+            f"No pixels above mom0 threshold {threshold:.3g} K km/s "
+            f"(peak={peak:.3g} K km/s, threshold_frac={threshold_frac})"
+        )
 
     y_idx, x_idx = np.indices(m0.shape)
     x_pix = x_idx[mask].astype(np.float64)

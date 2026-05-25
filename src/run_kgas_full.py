@@ -137,8 +137,12 @@ parser.add_argument(
 parser.add_argument(
     "--mom0-threshold",
     type=float,
-    default=0.05,
-    help="inClouds mom0 mask threshold as fraction of mom0 peak (default 0.05)",
+    default=0.0,
+    help=(
+        "inClouds mom0 mask threshold as fraction of mom0 peak. Default 0.0 "
+        "(include every finite positive pixel — KILOGAS DR1 mom0 maps are "
+        "already SNR-masked). Set >0 to re-threshold un-masked input."
+    ),
 )
 parser.add_argument(
     "--max-clouds",
@@ -911,9 +915,10 @@ if _do_preflight_cube and _imaging_preflight_result is not None:
     log.info("PREFLIGHT CUBE (KinMS inClouds vs observed):")
     log.info("  cube template      : %s", _imaging_paths.cube)
     log.info("  cube shape         : %s (nx, ny, nchan)", _sim_cube.shape)
-    log.info("  mom0 threshold_frac= %.4f (peak fraction)", float(args.mom0_threshold))
+    log.info("  mom0 threshold_frac= %.4f (peak fraction; 0.0 = include all SNR-masked pixels)",
+             float(args.mom0_threshold))
     log.info("  n_clouds           = %d", _inclouds.n_clouds)
-    log.info("  mom0 threshold     = %.4g K km/s (frac %.2f of peak retained)",
+    log.info("  mom0 threshold     = %.4g K km/s (flux retained after subsampling: %.2f)",
              _inclouds.threshold_kkms, _inclouds.flux_fraction)
     log.info("  flux observed      = %.4f Jy km/s", _flux_obs_jy_kms)
     log.info("  flux simulated     = %.4f Jy km/s (ratio sim/obs = %.3f)",

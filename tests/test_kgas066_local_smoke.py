@@ -130,7 +130,7 @@ def test_imaging_preflight_jy_kms_matches_kinms_test(smoke_run):
 
 
 def test_preflight_cube_flux_ratio_and_corr(smoke_run):
-    """KGAS066 reference: flux ratio sim/obs ≈ 0.97; mom0 cross-corr ≈ 0.978."""
+    """KGAS066 reference: flux ratio sim/obs ≈ 0.97; mom0 cross-corr ≈ 0.98."""
     log = smoke_run["log"]
     m_ratio = re.search(r"ratio sim/obs = ([0-9.]+)", log)
     m_corr = re.search(r"mom0 cross-corr\s*=\s*([0-9.]+)", log)
@@ -143,11 +143,19 @@ def test_preflight_cube_flux_ratio_and_corr(smoke_run):
 
 
 def test_preflight_cube_n_clouds(smoke_run):
-    """KGAS066 reference: ~775 clouds at the default 0.05 mom0 threshold."""
+    """KGAS066 reference: ~1709 clouds at the default 0.0 mom0 threshold (every
+    finite positive pixel of the SNR-masked mom0 becomes a cloud).
+    """
     m = re.search(r"n_clouds\s*=\s*(\d+)", smoke_run["log"])
     assert m, "n_clouds not logged"
     n = int(m.group(1))
-    assert 700 <= n <= 850, f"n_clouds = {n} outside expected [700, 850]"
+    assert 1500 <= n <= 2000, f"n_clouds = {n} outside expected [1500, 2000]"
+
+    m_thr = re.search(r"mom0 threshold_frac=\s*([0-9.]+)", smoke_run["log"])
+    assert m_thr, "mom0 threshold_frac not logged"
+    assert float(m_thr.group(1)) == pytest.approx(0.0, abs=1e-6), (
+        "default mom0 threshold_frac should be 0.0 (SNR-masked mom0)"
+    )
 
 
 def test_imaging_tight_priors_active(smoke_run):
