@@ -45,38 +45,48 @@ UVKIN_DIR="${ARC_BASE}/uvkin"
 SCRIPT="${UVKIN_DIR}/src/run_kgas_full.py"
 RUN_UVKIN="${UVKIN_DIR}/scripts/run_uvkin.sh"
 
-# Pipeline profile (override with env PIPELINE_SETTINGS=... for production / open_explore):
-#   diagnose_30kms — ~30 km/s spectral bin, imaging preflight paths in YAML (KGAS066)
-#   open_explore     — wide priors, ~10 km/s bin (spectral_bin_factor: 8)
-#   production       — uvkin_settings.yaml defaults
+# Pipeline profile (override with env PIPELINE_PROFILE=... for production / open_explore).
+# Each profile spells out the full set of run_kgas_full.py flags it injects so the
+# launched canfar command is self-documenting (no hidden defaults).
+#
+#   diagnose_30kms — ~30 km/s spectral bin, imaging-driven seeds + tight priors
+#                    + preflight inClouds cube (KILOGAS DR1 mom0 is SNR-masked,
+#                    so --mom0-threshold=0.0 keeps every finite positive pixel).
+#   open_explore   — wide priors, ~10 km/s bin (spectral_bin_factor: 8), no
+#                    imaging seeding; explores the box prior end-to-end.
+#   production     — uvkin_settings.yaml defaults; no imaging seeding.
 PIPELINE_PROFILE="${PIPELINE_PROFILE:-diagnose_30kms}"
+PROFILE_FLAGS=()
 case "${PIPELINE_PROFILE}" in
     diagnose_30kms)
         PIPELINE_SETTINGS="${UVKIN_DIR}/config/uvkin_settings_diagnose_30kms.yaml"
         MAX_STEPS="${MAX_STEPS:-80000}"
-        USE_IMAGING_SEEDS=1
+        PROFILE_FLAGS=(
+            --use-imaging-seeds
+            --imaging-tight-priors
+            --write-preflight-cube
+            --mom0-threshold 0.0
+        )
         ;;
     open_explore)
         PIPELINE_SETTINGS="${UVKIN_DIR}/config/uvkin_settings_open_explore.yaml"
         MAX_STEPS="${MAX_STEPS:-40000}"
-        USE_IMAGING_SEEDS=0
+        PROFILE_FLAGS=(--no-preflight-cube)
         ;;
     production|*)
         PIPELINE_SETTINGS="${UVKIN_DIR}/config/uvkin_settings.yaml"
         MAX_STEPS="${MAX_STEPS:-10000}"
-        USE_IMAGING_SEEDS=0
+        PROFILE_FLAGS=(--no-preflight-cube)
         ;;
 esac
 
 N_WALKERS=32
 CHECK_INTERVAL=500
 
-# Extra flags forwarded to run_kgas_full.py via run_uvkin.sh (imaging paths come from YAML).
-EXTRA_RUN_ARGS=()
-if [[ "${USE_IMAGING_SEEDS}" -eq 1 ]]; then
-    EXTRA_RUN_ARGS+=(--use-imaging-seeds)
-fi
-# Optional overrides, e.g. EXTRA_RUN_ARGS+=(--no-preflight-plots) for faster jobs
+# Final extra-args list forwarded to run_kgas_full.py via run_uvkin.sh.
+# Imaging product paths come from galaxies.<id>.imaging_products in the YAML.
+EXTRA_RUN_ARGS=("${PROFILE_FLAGS[@]}")
+# Optional overrides, e.g. EXTRA_RUN_ARGS_OVERRIDE="--no-preflight-plots --max-clouds 5000"
 if [[ -n "${EXTRA_RUN_ARGS_OVERRIDE:-}" ]]; then
     # shellcheck disable=SC2206
     EXTRA_RUN_ARGS+=(${EXTRA_RUN_ARGS_OVERRIDE})
@@ -97,12 +107,8 @@ echo "Mode      : flexible (elastic up to 16 cores, 4-32 GB)"
 echo "Profile   : ${PIPELINE_PROFILE}"
 echo "Settings  : ${PIPELINE_SETTINGS}"
 echo "Converge  : tau-based (check every ${CHECK_INTERVAL} steps, max ${MAX_STEPS})"
-if [[ "${USE_IMAGING_SEEDS}" -eq 1 ]]; then
-    echo "Imaging   : --use-imaging-seeds (mom0/mom1/mom2/cube paths from YAML)"
-fi
-if [[ ${#EXTRA_RUN_ARGS[@]} -gt 0 ]]; then
-    echo "Extra     : ${EXTRA_RUN_ARGS[*]}"
-fi
+echo "Run flags : ${EXTRA_RUN_ARGS[*]}"
+echo "            (imaging product paths sourced from galaxies.<id>.imaging_products in YAML)"
 echo ""
 
 if [[ "${DRY_RUN}" == false ]]; then
