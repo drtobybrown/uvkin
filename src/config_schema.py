@@ -49,6 +49,9 @@ class GalaxyConfig:
     # HI recession velocity (km/s) when available; provenance only.
     vhi_kms: float | None = None
     imaging_products: ImagingProductsConfig | None = None
+    # MCMC flux: ``auto`` aligns seed/bounds to visibility audit when mom0/data > 2.
+    flux_seed_source: str | None = None
+    flux_bounds_jy_kms: Tuple[float, float] | None = None
 
     @property
     def flux_int(self) -> float:

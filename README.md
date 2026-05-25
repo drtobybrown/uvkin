@@ -289,3 +289,169 @@ The script prints:
 
 `r_scale` is emitted in **arcsec**, estimated from the moment-0 half-light radius
 (`r50`) with an exponential-disk conversion `r_scale = r50 / 1.678`.
+
+## Diagnostics — imaging vs visibility flux audit
+
+When MCMC parameters hit prior boundaries because the visibilities seem to
+prefer a different integrated flux than the imaging mom0 (the KGAS066
+diagnosis of May 2026), use these two standalone scripts to pin down where
+the discrepancy lives. Neither runs KinMS or fits anything — they just put
+matching units onto the imaging cube and the .npz and compare them.
+
+### Three-number verdict
+
+```
+flux_int_mom0_jy_kms  (imaging mom0, K km/s → Jy·km/s; existing imaging_preflight number)
+        │
+        │  imaging_preflight.flux_int_from_moment0_kkms
+        ▼
+  ┌─────────────┐                 ┌─────────────┐
+  │ Imaging cube │ ── cube → FT → │ model_vis on │ ── audit ─→ model_integrated_flux_jy_kms
+  │   (K)       │   NUFFTEngine    │ npz uv grid │
+  └─────────────┘                 └─────────────┘
+                                          ▲
+                                          │  audit_visibilities (same estimator on both grids)
+                                          ▼
+                                  ┌─────────────┐
+                                  │   .npz vis  │ ── audit ─→ data_integrated_flux_jy_kms
+                                  └─────────────┘
+```
+
+- `cubeViaFT ≈ cubeFlux` but `dataFlux << cubeViaFT` → the discrepancy is on
+  the **visibility side** (calibration / continuum / missing MS step in
+  `ms2uvfit`).
+- `cubeViaFT ≈ dataFlux << cubeFlux` → the **imaging cube does not predict**
+  the mom0 flux on the .npz uv coverage (short-spacing-only flux, mom0 mask
+  too inclusive, or pixels-per-beam mis-counting).
+- All three agree but disagree with MCMC → the chain itself was the problem,
+  not the data.
+
+### Phase A — direct .npz audit
+
+`scripts/audit_vis_flux.py` answers a single question: **what integrated
+line flux does the .npz actually encode?** It reproduces the same time /
+uv / spectral binning the MCMC pipeline applies, then estimates the total
+flux from the weighted-mean `<|V|>` on the shortest baselines (a clean
+proxy for `|V(0,0)| ≈ F_total` for an unresolved or weakly-resolved
+source).
+
+```bash
+python scripts/audit_vis_flux.py \
+  --kgas-id KGAS066 \
+  --data /path/to/KILOGAS066.npz \
+  --pipeline-settings config/uvkin_settings_diagnose_30kms.yaml \
+  --outdir results/KGAS066_vis_audit
+```
+
+Outputs (under `--outdir`):
+
+| File | Contents |
+|------|----------|
+| `audit.json` | `shortest_baseline_integrated_flux_jy_kms`, `off_line_continuum_jy`, `line_to_offline_ratio`, `n_short_baselines`, `short_threshold_m`, full per-channel `<|V|>` and uv-distance profiles. |
+| `line_spectrum.png` | Per-channel `<|V|>` on all baselines vs the shortest 5 %, with line / off-line channels shaded. |
+| `uv_profile_short_vs_long.png` | `<|V|>` vs uv distance (log–log) for line vs off-line channels. |
+| `audit.log` | Full logging capture mirroring the `run.log` style. |
+
+Use `--short-pct N` to widen or narrow the shortest-baseline subset (default
+5 %), `--no-time-average` / `--no-uv-bin` to skip an aggregation step, and
+`--vsys`, `--line-width-kms`, `--vel-buffer-kms` to override the catalogue
+defaults.
+
+### Phase B — imaging-cube FT head-to-head
+
+`scripts/compare_cube_vs_npz.py` FTs the imaging cube through
+`uvfit.NUFFTEngine` onto the .npz uv grid and runs the same audit on
+both — so `model_integrated_flux_jy_kms` (the cube prediction) and
+`data_integrated_flux_jy_kms` (the .npz) are produced by identical
+estimators on identical baselines and channels.
+
+```bash
+python scripts/compare_cube_vs_npz.py \
+  --kgas-id KGAS066 \
+  --data /path/to/KILOGAS066.npz \
+  --imaging-cube /path/to/KGAS66_clipped_cube.fits \
+  --mom0 /path/to/KGAS66_Ico_K_kms-1.fits \
+  --pipeline-settings config/uvkin_settings_diagnose_30kms.yaml \
+  --outdir results/KGAS066_cube_vs_npz
+```
+
+K → Jy/pixel uses the cube central observed frequency and beam via the
+astropy `brightness_temperature` equivalency (same path
+`imaging_preflight.flux_int_from_moment0_kkms` follows for the mom0), then
+divides by pixels-per-beam so the cube enters `NUFFTEngine` in
+**Jy / pixel / channel**. Spectral alignment is nearest-channel matching
+between the cube velocity axis and the (already-binned) .npz channel grid;
+the mean `|Δv|` is reported in `compare.json` under
+`alignment.velocity_offset_kms_mean`.
+
+Outputs (under `--outdir`):
+
+| File | Contents |
+|------|----------|
+| `compare.json` | `flux_int_mom0_jy_kms`, `model_integrated_flux_jy_kms`, `data_integrated_flux_jy_kms`, `ratio_data_over_model`, `chi2_line` / `chi2_offline`, per-UV-bin model/data amplitudes, and the alignment metadata (`jy_per_k`, `pixels_per_beam`, `nu_obs_hz`). |
+| `line_spectrum_comparison.png` | Per-channel `<|V|>` for model vs data on the shortest baselines. |
+| `uv_profile_comparison.png` | Model vs data `<|V|>` vs uv distance for line and off-line channels. |
+| `channel_residuals.png` | `<|V_data − V_model|>` per channel (all baselines). |
+| `compare.log` | Every derived intermediate (Jy/K, pixels/beam, channel alignment offset). |
+
+Omit `--mom0` to derive `flux_int_mom0_jy_kms` from the cube channel sum
+itself; supply it explicitly to force the verdict number to come from the
+SNR-masked DR1 mom0 map.
+
+### Reading the verdict
+
+```text
+VERDICT — three numbers:
+  flux_int_mom0_jy_kms              = 91.7728
+  model_integrated_flux_jy_kms      = 35.7821
+  data_integrated_flux_jy_kms       = 25.5209
+```
+
+Walk the diagram above with these three numbers:
+
+- `data ≈ model` but both `<< mom0` → the cube on the .npz uv coverage
+  cannot reproduce the mom0 flux. Most likely cause: mom0 picks up
+  extended flux on scales larger than the shortest .npz baseline
+  (KGAS066: ~15 m → ~18″ scales). Tighten the mom0 mask, check
+  pixels-per-beam, or accept that the .npz cannot recover the mom0 number.
+- `model ≈ mom0` but `data << model` → cube predicts the mom0 flux at the
+  .npz baselines, but the .npz itself does not contain it. Suspect
+  `ms2uvfit` calibration / continuum subtraction / weighting.
+- All three agree → the data is consistent; the MCMC failure was in the
+  forward model or the prior box, not the data.
+
+Both scripts also write **`flux_recommendation.json`** (seed, bounds,
+`flux_int_mom0_jy_kms`, `flux_int_cube_jy_kms`, `data_integrated_jy_kms`,
+`model_integrated_jy_kms`, `ratio_mom0_over_data`, aggregation flags).
+`compare_cube_vs_npz.py` adds `flux_int_cube_jy_kms` via
+`imaging_preflight.flux_int_from_cube_k` (sanity check vs mom0). Use
+`--line-width-from-imaging` (and `--imaging-cube` on `audit_vis_flux.py`
+when YAML cube paths are ARC-only) to set the line mask from
+`channel_width_kms × NAXIS3`.
+
+### KGAS066 audit matrix
+
+```bash
+./scripts/run_flux_audit_kgas.sh
+# → results/KGAS066_flux_audit/SUMMARY.md (+ per-run compare_*/vis_* dirs)
+```
+
+Runs baseline, no aggregation, imaging spectral window, and short-pct=20
+variants; copies baseline `flux_recommendation.json` to the matrix root.
+
+### MCMC flux alignment
+
+When `--use-imaging-seeds` is on, geometry still comes from moments; **flux**
+is decoupled by default (`--flux-seed-source auto`): if `mom0 / data > 2`,
+the seed is `0.5×(data+model)` with bounds from the audit (YAML
+`flux_bounds_jy_kms` can override, e.g. `[10, 120]` for KGAS066 in
+`uvkin_settings_diagnose_30kms.yaml`). Optional `--run-flux-audit` logs
+`FLUX AUDIT — MCMC recommendation` and writes `flux_recommendation.json`
+under the run outdir. `submit_kgas.sh` profile `diagnose_30kms` passes
+`--flux-seed-source auto --run-flux-audit`.
+
+The new tests `tests/test_visibility_audit.py` and `tests/test_cube_vs_npz.py`
+cover both helpers (constant-amplitude recovery, line-mask indexing,
+K → Jy/pixel units, `recommend_mcmc_flux`, end-to-end synthetic Gaussian
+recovery at 50 Jy·km/s). They run with the rest of the unit suite via
+`scripts/run_local_tests.sh --unit`.

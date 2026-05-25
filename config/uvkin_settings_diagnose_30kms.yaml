@@ -60,6 +60,10 @@ galaxies:
     flux_int_jy_kms: 160.055473
     obs_freq_range_ghz: [224.148, 224.506]
     phase_centroid_seed_arcsec: [0.0, 0.0]
+    # MCMC flux: auto runs visibility audit and seeds flux from data/model when mom0/data > 2.
+    # Imaging mom0 (~92 Jy·km/s) stays for inClouds preflight; visibility fit uses ~25–40 Jy·km/s.
+    flux_seed_source: auto
+    flux_bounds_jy_kms: [10.0, 120.0]
     imaging_products:
       cube: /arc/projects/KILOGAS/products/v1.2/original/by_galaxy/KGAS66/30kms/KGAS66_clipped_cube.fits
       mom0: /arc/projects/KILOGAS/products/v1.2/original/by_galaxy/KGAS66/30kms/KGAS66_Ico_K_kms-1.fits

@@ -87,6 +87,10 @@ def smoke_run(tmp_path_factory):
         "--imaging-mom1", str(_IMG_DIR / "KGAS66_mom1.fits"),
         "--imaging-mom2", str(_IMG_DIR / "KGAS66_mom2.fits"),
         "--use-imaging-seeds",
+        "--imaging-tight-priors",
+        "--flux-seed-source", "auto",
+        "--run-flux-audit",
+        "--mom0-threshold", "0.0",
         "--n-walkers", "32", "--n-steps", "4", "--n-burn", "1",
         "--n-processes", "1",
     ]
@@ -156,6 +160,26 @@ def test_preflight_cube_n_clouds(smoke_run):
     assert float(m_thr.group(1)) == pytest.approx(0.0, abs=1e-6), (
         "default mom0 threshold_frac should be 0.0 (SNR-masked mom0)"
     )
+
+
+def test_mcmc_flux_seed_visibility_aligned(smoke_run):
+    """MCMC flux seed must follow visibility audit, not mom0 (~92 Jy·km/s)."""
+    log = smoke_run["log"]
+    assert "IMAGING FLUX (mom0)" in log
+    m = re.search(
+        r"MCMC FLUX SEED \(visibility-aligned, source=[^)]+\):\s*([0-9.]+)",
+        log,
+    )
+    assert m, "visibility-aligned MCMC flux seed not logged"
+    seed = float(m.group(1))
+    assert 15.0 <= seed <= 55.0, (
+        f"MCMC flux seed {seed} Jy·km/s outside visibility-aligned band [15, 55]"
+    )
+    m_bounds = re.search(r"flux:\s*\(([-\d.eE+]+),\s*([-\d.eE+]+)\)", log)
+    assert m_bounds, "flux MCMC bounds not logged"
+    lo, hi = float(m_bounds.group(1)), float(m_bounds.group(2))
+    assert lo < seed < hi, f"flux seed {seed} outside bounds ({lo}, {hi})"
+    assert lo <= 15.0, f"flux lower bound {lo} still mom0-scaled (expected ≤15)"
 
 
 def test_imaging_tight_priors_active(smoke_run):
@@ -229,6 +253,7 @@ def test_log_contains_required_diagnostic_blocks(smoke_run):
         "PRIOR REFERENCE (imaging-derived recommendations):",
         "Applied --use-imaging-seeds:",
         "PREFLIGHT CUBE (KinMS inClouds vs observed):",
+        "FLUX AUDIT — MCMC recommendation",
         "BOUNDS — resolved MCMC box prior",
         "RESOLVED_MCMC_BOUNDS",
         "KinMS setup:",

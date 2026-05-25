@@ -208,6 +208,21 @@ def _parse_galaxy(
     if vel_buffer_kms is not None and vel_buffer_kms < 0.0:
         raise ValueError(f"galaxies.{kgas_id}.vel_buffer_kms must be >= 0")
     imaging = _parse_imaging_products(m.get("imaging_products"))
+    flux_seed_src = m.get("flux_seed_source", None)
+    if flux_seed_src is not None:
+        flux_seed_src = str(flux_seed_src).strip().lower()
+    fb_raw = m.get("flux_bounds_jy_kms", None)
+    flux_bounds: Tuple[float, float] | None = None
+    if fb_raw is not None:
+        if not isinstance(fb_raw, (list, tuple)) or len(fb_raw) != 2:
+            raise ValueError(
+                f"galaxies.{kgas_id}.flux_bounds_jy_kms must be [lo, hi] Jy·km/s"
+            )
+        flux_bounds = (float(fb_raw[0]), float(fb_raw[1]))
+        if flux_bounds[0] <= 0.0 or flux_bounds[1] <= 0.0 or flux_bounds[0] >= flux_bounds[1]:
+            raise ValueError(
+                f"galaxies.{kgas_id}.flux_bounds_jy_kms need 0 < lo < hi; got {fb_raw}"
+            )
     return GalaxyConfig(
         kilogas_archive_id=str(m["kilogas_archive_id"]),
         data_path_default=str(m["data_path_default"]),
@@ -225,6 +240,8 @@ def _parse_galaxy(
         dec_deg=dec_deg,
         vhi_kms=vhi_kms,
         imaging_products=imaging,
+        flux_seed_source=flux_seed_src,
+        flux_bounds_jy_kms=flux_bounds,
     )
 
 

@@ -185,6 +185,33 @@ parser.add_argument(
         "YAML file with aggregation options (default: uvkin_settings.yaml next to this script)"
     ),
 )
+parser.add_argument(
+    "--flux-seed-source",
+    default=None,
+    choices=("auto", "mom0", "vis_data", "vis_mean", "catalog"),
+    help=(
+        "MCMC flux seed: auto aligns to visibility audit when mom0/data > 2; "
+        "mom0 uses imaging mom0; vis_data/vis_mean use audit; catalog uses YAML."
+    ),
+)
+parser.add_argument(
+    "--flux-bounds-jy-kms",
+    nargs=2,
+    type=float,
+    default=None,
+    metavar=("LO", "HI"),
+    help="Explicit MCMC flux box prior (Jy·km/s); overrides YAML multipliers and auto bounds.",
+)
+parser.add_argument(
+    "--run-flux-audit",
+    action="store_true",
+    help="Run visibility/cube flux audit before MCMC; write flux_recommendation.json to --outdir.",
+)
+parser.add_argument(
+    "--flux-audit-outdir",
+    default=None,
+    help="Directory for flux audit JSON (default: --outdir).",
+)
 
 args = parser.parse_args()
 
@@ -271,6 +298,7 @@ from fit_bounds import format_resolved_empirical_bounds, get_empirical_bounds
 from spectral_windows import build_velocity_windows, compute_line_channel_mask
 from uv_aggregate import (
     average_time_steps,
+    bin_channels,
     bin_uv_plane,
     cast_uv_arrays,
     extract_time_and_baseline,
@@ -302,71 +330,14 @@ from mcmc_diagnostics import (
     prior_wall_fractions,
     write_mcmc_diagnostics,
 )
+from flux_audit_runner import (
+    AggregatedVis,
+    resolve_spectral_window,
+    run_flux_audit_for_mcmc,
+)
+from visibility_audit import format_recommendation_log
 
 PRECISION = "single"  # float32 / complex64 everywhere; single canonical contract
-
-
-def bin_channels(vis, weights, vel, freqs, bin_factor):
-    """
-    Weighted spectral binning: boost per-channel SNR by ~sqrt(N) for factor N.
-
-    For each baseline, V_b = sum_i(V_i * W_i) / sum_i(W_i) and W_b = sum_i(W_i).
-    Bins with zero total weight yield V_b = 0 and W_b = 0.
-
-    Parameters
-    ----------
-    vis : ndarray, shape (n_row, n_chan), complex
-    weights : ndarray, shape (n_row, n_chan), real
-    vel : ndarray, shape (n_chan,), float
-        Radio convention velocities (km s^-1).
-    freqs : ndarray, shape (n_chan,), float
-        Channel centre frequencies (Hz).
-    bin_factor : int
-        Number of adjacent channels per bin; must be >= 1.
-
-    Returns
-    -------
-    vis_b, weights_b, vel_b, freqs_b, n_dropped : tuple
-        Binned arrays and count of trailing channels dropped (0 if none).
-    """
-    if bin_factor < 1:
-        raise ValueError(f"bin_factor must be >= 1, got {bin_factor}")
-    if vis.shape != weights.shape:
-        raise ValueError("vis and weights must have the same shape")
-    n_chan = vis.shape[1]
-    if vel.shape[0] != n_chan or freqs.shape[0] != n_chan:
-        raise ValueError("vel and freqs must match spectral dimension of vis")
-
-    if bin_factor == 1:
-        return vis, weights, vel, freqs, 0
-
-    n_use = (n_chan // bin_factor) * bin_factor
-    n_drop = n_chan - n_use
-    if n_use == 0:
-        raise ValueError(
-            f"After binning by {bin_factor}, no full bins remain ({n_chan} channels)"
-        )
-
-    vis = vis[:, :n_use]
-    weights = weights[:, :n_use]
-    vel = vel[:n_use]
-    freqs = freqs[:n_use]
-
-    nrow, n_b = vis.shape[0], n_use // bin_factor
-    vis_r = vis.reshape(nrow, n_b, bin_factor)
-    w_r = weights.reshape(nrow, n_b, bin_factor)
-    w_sum = np.sum(w_r, axis=2)
-    numer = np.sum(vis_r * w_r, axis=2)
-    vis_b = np.divide(
-        numer,
-        w_sum,
-        out=np.zeros(numer.shape, dtype=numer.dtype),
-        where=w_sum > 0,
-    )
-    weights_b = w_sum.astype(weights.dtype, copy=False)
-    vel_b = np.mean(vel.reshape(n_b, bin_factor), axis=1)
-    freqs_b = np.mean(freqs.reshape(n_b, bin_factor), axis=1)
-    return vis_b, weights_b, vel_b, freqs_b, n_drop
 
 
 def write_bestfit_cube_fits(
@@ -762,22 +733,27 @@ log.info(
 )
 
 mcmc_flux_jy_kms = float(_cfg.flux_int_jy_kms)
+_mcmc_flux_imaging_mom0_jy_kms = None
 if (
     _imaging_preflight_result is not None
     and _imaging_preflight_result.flux_int_mom0_jy_kms is not None
     and args.use_imaging_seeds
 ):
-    mcmc_flux_jy_kms = float(_imaging_preflight_result.flux_int_mom0_jy_kms)
+    _mcmc_flux_imaging_mom0_jy_kms = float(_imaging_preflight_result.flux_int_mom0_jy_kms)
+    mcmc_flux_jy_kms = _mcmc_flux_imaging_mom0_jy_kms
     log.info(
-        "MCMC flux seed from imaging mom0: %.6f Jy·km/s (catalog was %.6f)",
-        mcmc_flux_jy_kms,
+        "IMAGING FLUX (mom0): %.6f Jy·km/s — image-domain integral (catalog %.6f)",
+        _mcmc_flux_imaging_mom0_jy_kms,
         float(_cfg.flux_int_jy_kms),
     )
 else:
     log.info(
-        "MCMC Flux parameter standardized to Integrated Jy·km/s. Initial seed: %s.",
+        "MCMC flux catalogue seed: %.6f Jy·km/s (integrated line flux).",
         mcmc_flux_jy_kms,
     )
+
+_flux_bounds_from_audit = None
+_flux_audit_recommendation = None
 
 # Full imaging preflight log (includes dv alignment after binning)
 if _imaging_paths is not None:
@@ -963,6 +939,88 @@ log.info(
     _gas_sigma_floor,
 )
 
+# Flux audit + MCMC flux seed (visibility-aligned when mom0 >> data)
+_flux_seed_src = (
+    args.flux_seed_source
+    or _cfg.flux_seed_source
+    or ("auto" if args.use_imaging_seeds and _imaging_paths is not None else "catalog")
+)
+_run_flux_audit = bool(args.run_flux_audit) or _flux_seed_src == "auto"
+if _run_flux_audit:
+    _audit_window = resolve_spectral_window(
+        _cfg,
+        PIPE.shared,
+        vsys=args.vsys,
+        line_width_kms=args.line_width_kms,
+        vel_buffer_kms=VEL_BUFFER_EFFECTIVE,
+        line_width_from_imaging=False,
+        cube_path=_imaging_paths.cube if _imaging_paths is not None else None,
+    )
+    _agg_vis = AggregatedVis(
+        u_m=np.asarray(u_m_all),
+        v_m=np.asarray(v_m_all),
+        vis=np.asarray(vis_trim),
+        weights=np.asarray(weights_trim),
+        freqs_hz=np.asarray(freqs_trim),
+        vel_kms=np.asarray(vel_trim),
+        dv_kms=current_dv_kms,
+        window=_audit_window,
+    )
+    _cube_p = _imaging_paths.cube if _imaging_paths is not None else args.imaging_cube
+    _mom0_p = _imaging_paths.mom0 if _imaging_paths is not None else args.imaging_mom0
+    _faudit, _flux_audit_recommendation, _model_flux = run_flux_audit_for_mcmc(
+        agg_vis=_agg_vis,
+        cfg=_cfg,
+        shared=PIPE.shared,
+        pipe=PIPE,
+        f_rest_hz=F_REST,
+        cube_path=_cube_p,
+        mom0_path=_mom0_p,
+        run_compare=_cube_p is not None and Path(_cube_p).is_file(),
+    )
+    _flux_bounds_from_audit = _flux_audit_recommendation.flux_bounds_jy_kms
+    log.info("=" * 60)
+    for _line in format_recommendation_log(_flux_audit_recommendation).splitlines():
+        log.info("%s", _line)
+    log.info("=" * 60)
+    _faudit_out = Path(args.flux_audit_outdir or args.outdir)
+    _faudit_out.mkdir(parents=True, exist_ok=True)
+    import json as _json
+
+    with open(_faudit_out / "flux_recommendation.json", "w", encoding="utf-8") as _jf:
+        _json.dump(_flux_audit_recommendation.to_dict(), _jf, indent=2)
+    log.info("Wrote %s", _faudit_out / "flux_recommendation.json")
+
+if _flux_seed_src == "auto" and _flux_audit_recommendation is not None:
+    mcmc_flux_jy_kms = float(_flux_audit_recommendation.flux_seed_jy_kms)
+    log.info(
+        "MCMC FLUX SEED (visibility-aligned, source=%s): %.6f Jy·km/s",
+        _flux_audit_recommendation.source,
+        mcmc_flux_jy_kms,
+    )
+elif _flux_seed_src == "mom0" and _mcmc_flux_imaging_mom0_jy_kms is not None:
+    mcmc_flux_jy_kms = _mcmc_flux_imaging_mom0_jy_kms
+    log.info("MCMC FLUX SEED (mom0): %.6f Jy·km/s", mcmc_flux_jy_kms)
+elif _flux_seed_src == "vis_data" and _flux_audit_recommendation is not None:
+    mcmc_flux_jy_kms = float(_flux_audit_recommendation.data_integrated_jy_kms)
+    log.info("MCMC FLUX SEED (vis_data audit): %.6f Jy·km/s", mcmc_flux_jy_kms)
+elif _flux_seed_src == "vis_mean" and _flux_audit_recommendation is not None:
+    d = float(_flux_audit_recommendation.data_integrated_jy_kms or 0.0)
+    m = float(_flux_audit_recommendation.model_integrated_jy_kms or d)
+    mcmc_flux_jy_kms = 0.5 * (d + m)
+    log.info("MCMC FLUX SEED (vis_mean audit): %.6f Jy·km/s", mcmc_flux_jy_kms)
+elif _flux_seed_src == "catalog":
+    mcmc_flux_jy_kms = float(_cfg.flux_int_jy_kms)
+    log.info("MCMC FLUX SEED (catalog): %.6f Jy·km/s", mcmc_flux_jy_kms)
+
+if args.flux_bounds_jy_kms is not None:
+    _flux_bounds_from_audit = (float(args.flux_bounds_jy_kms[0]), float(args.flux_bounds_jy_kms[1]))
+elif _cfg.flux_bounds_jy_kms is not None:
+    _flux_bounds_from_audit = (
+        float(_cfg.flux_bounds_jy_kms[0]),
+        float(_cfg.flux_bounds_jy_kms[1]),
+    )
+
 # KinMS ``vSys`` is absolute LOS velocity (km/s), same convention as
 # ``vel_trim`` from ``C_KMS * (1 - nu / f_rest)``. Offsets in YAML are
 # applied around the catalogue ``VSYS``, *not* around zero.
@@ -978,11 +1036,6 @@ _tighten_priors = (
 if _tighten_priors:
     _s_tight = _imaging_preflight_result.seeds
     _gas_seed = max(float(_s_tight.gas_sigma_kms), float(_gas_sigma_floor))
-    _imaging_flux_seed = (
-        _imaging_preflight_result.flux_int_mom0_jy_kms
-        or _imaging_preflight_result.flux_int_cube_jy_kms
-        or mcmc_flux_jy_kms
-    )
     _mcmc_bounds_active = type(PIPE.mcmc_bounds)(
         vsys_offset_kms=(-50.0, 50.0),
         gas_sigma=(max(0.5 * _gas_seed, _gas_sigma_floor), max(2.0 * _gas_seed, _gas_sigma_floor + 1.0)),
@@ -995,14 +1048,23 @@ if _tighten_priors:
         vmax_multipliers=(0.25, 4.0),
         r_scale_multipliers=(0.25, 4.0),
     )
-    _flux_bounds_active = (
-        0.5 * float(_imaging_flux_seed),
-        2.0 * float(_imaging_flux_seed),
-    )
-    _bounds_label = "imaging-tight (seeded from preflight)"
+    if _flux_bounds_from_audit is not None:
+        _flux_bounds_active = _flux_bounds_from_audit
+        _bounds_label = "imaging-tight + visibility flux bounds"
+    else:
+        _imaging_flux_seed = (
+            _imaging_preflight_result.flux_int_mom0_jy_kms
+            or _imaging_preflight_result.flux_int_cube_jy_kms
+            or mcmc_flux_jy_kms
+        )
+        _flux_bounds_active = (
+            0.5 * float(_imaging_flux_seed),
+            2.0 * float(_imaging_flux_seed),
+        )
+        _bounds_label = "imaging-tight (seeded from preflight)"
 else:
     _mcmc_bounds_active = PIPE.mcmc_bounds
-    _flux_bounds_active = None
+    _flux_bounds_active = _flux_bounds_from_audit
     _bounds_label = "YAML box priors (no imaging tightening)"
 
 empirical_bounds = get_empirical_bounds(
@@ -1325,16 +1387,31 @@ log.info(
 )
 
 log.info("Degeneracy probes (chi2 at perturbed seeds, others fixed):")
-for label, overrides in (
+_degen_probes = [
     ("flux×0.1", {"flux": init_params["flux"] * 0.1}),
     ("flux×10", {"flux": init_params["flux"] * 10.0}),
-    ("vmax×0.5", {"vmax": init_params["vmax"] * 0.5}),
-    ("vmax×2", {"vmax": init_params["vmax"] * 2.0}),
-    ("r_scale×0.5", {"r_scale": init_params["r_scale"] * 0.5}),
-    ("r_scale×2", {"r_scale": init_params["r_scale"] * 2.0}),
-    ("gamma=0", {"gamma": 0.0}),
-    ("gamma=1", {"gamma": 1.0}),
-):
+]
+if _flux_audit_recommendation is not None:
+    _degen_probes.extend(
+        [
+            ("flux=audit_seed", {"flux": float(_flux_audit_recommendation.flux_seed_jy_kms)}),
+            (
+                "flux=audit_seed×0.5",
+                {"flux": 0.5 * float(_flux_audit_recommendation.flux_seed_jy_kms)},
+            ),
+        ]
+    )
+_degen_probes.extend(
+    [
+        ("vmax×0.5", {"vmax": init_params["vmax"] * 0.5}),
+        ("vmax×2", {"vmax": init_params["vmax"] * 2.0}),
+        ("r_scale×0.5", {"r_scale": init_params["r_scale"] * 0.5}),
+        ("r_scale×2", {"r_scale": init_params["r_scale"] * 2.0}),
+        ("gamma=0", {"gamma": 0.0}),
+        ("gamma=1", {"gamma": 1.0}),
+    ]
+)
+for label, overrides in _degen_probes:
     _probe = dict(init_params)
     _probe.update(overrides)
     _pv = np.array([_probe[n] for n in param_names_list])

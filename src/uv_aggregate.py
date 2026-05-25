@@ -200,6 +200,63 @@ def average_time_steps(
     return u_out, v_out, vis_out, weights_out
 
 
+def bin_channels(
+    vis: np.ndarray,
+    weights: np.ndarray,
+    vel: np.ndarray,
+    freqs: np.ndarray,
+    bin_factor: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    """Weighted spectral binning by ``bin_factor`` adjacent channels.
+
+    For each baseline, ``V_b = sum_i(V_i * W_i) / sum_i(W_i)`` and
+    ``W_b = sum_i(W_i)``. Bins with zero total weight yield ``V_b = 0``.
+    ``vel`` (km/s) and ``freqs`` (Hz) are arithmetic-averaged per bin.
+
+    Returns ``(vis_b, weights_b, vel_b, freqs_b, n_dropped)`` where
+    ``n_dropped`` is the number of trailing channels that did not fit a full
+    bin. ``bin_factor == 1`` is a no-op pass-through.
+    """
+    if bin_factor < 1:
+        raise ValueError(f"bin_factor must be >= 1, got {bin_factor}")
+    if vis.shape != weights.shape:
+        raise ValueError("vis and weights must have the same shape")
+    n_chan = vis.shape[1]
+    if vel.shape[0] != n_chan or freqs.shape[0] != n_chan:
+        raise ValueError("vel and freqs must match spectral dimension of vis")
+
+    if bin_factor == 1:
+        return vis, weights, vel, freqs, 0
+
+    n_use = (n_chan // bin_factor) * bin_factor
+    n_drop = n_chan - n_use
+    if n_use == 0:
+        raise ValueError(
+            f"After binning by {bin_factor}, no full bins remain ({n_chan} channels)"
+        )
+
+    vis = vis[:, :n_use]
+    weights = weights[:, :n_use]
+    vel = vel[:n_use]
+    freqs = freqs[:n_use]
+
+    nrow, n_b = vis.shape[0], n_use // bin_factor
+    vis_r = vis.reshape(nrow, n_b, bin_factor)
+    w_r = weights.reshape(nrow, n_b, bin_factor)
+    w_sum = np.sum(w_r, axis=2)
+    numer = np.sum(vis_r * w_r, axis=2)
+    vis_b = np.divide(
+        numer,
+        w_sum,
+        out=np.zeros(numer.shape, dtype=numer.dtype),
+        where=w_sum > 0,
+    )
+    weights_b = w_sum.astype(weights.dtype, copy=False)
+    vel_b = np.mean(vel.reshape(n_b, bin_factor), axis=1)
+    freqs_b = np.mean(freqs.reshape(n_b, bin_factor), axis=1)
+    return vis_b, weights_b, vel_b, freqs_b, n_drop
+
+
 def encode_baseline(ant1: np.ndarray, ant2: np.ndarray) -> np.ndarray:
     """Stable integer baseline ID from CASA-style antenna indices (0 or 1 based)."""
     a1 = np.asarray(ant1, dtype=np.int64).ravel()

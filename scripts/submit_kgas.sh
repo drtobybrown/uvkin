@@ -66,6 +66,8 @@ case "${PIPELINE_PROFILE}" in
             --imaging-tight-priors
             --write-preflight-cube
             --mom0-threshold 0.0
+            --flux-seed-source auto
+            --run-flux-audit
         )
         ;;
     open_explore)
