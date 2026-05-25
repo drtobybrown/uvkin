@@ -1,6 +1,24 @@
 # Diagnostic MCMC profile: open_explore priors + ~30 km/s spectral binning
 # aligned with KILOGAS 30kms imaging products.
 # Use: python run_kgas_full.py ... --pipeline-settings config/uvkin_settings_diagnose_30kms.yaml
+#
+# Moment-map integration (kinms_test fixes ported into uvkin):
+#   --use-imaging-seeds        Replaces catalogue seeds (PA, inc, vsys, vmax,
+#                              r_scale, gas_sigma, dx, dy, integrated flux)
+#                              with values derived from the imaging_products
+#                              below. Also activates imaging-tightened priors
+#                              by default (see --no-imaging-tight-priors to
+#                              disable). Tight priors: pa/inc ±15°, vsys ±50
+#                              km/s, flux/vmax/r_scale [0.25×, 4×] of seed,
+#                              gas_sigma [0.5×, 2×] of seed, dx/dy ±2".
+#   --write-preflight-cube     Build a KinMS inClouds cube from moment maps,
+#                              write Jy/beam FITS on the observed WCS
+#                              template, and save observed/simulated/
+#                              comparison PNGs under outdir/preflight_inclouds/.
+#                              Default: on when imaging_products.cube/mom0/mom1
+#                              are present.
+# The YAML mcmc_bounds block below is the **fallback** when --use-imaging-seeds
+# is absent or imaging products are unavailable (e.g. KGAS007).
 # =============================================================================
 shared:
   default_channel_width_kms: 1.2699254451290471

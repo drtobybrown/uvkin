@@ -22,6 +22,7 @@ from prior_seed import (
     _weighted_median,
 )
 from config_schema import ImagingProductsConfig
+from kinms_grid import central_observed_frequency_hz, gaussian_beam_area_sr
 
 log = logging.getLogger(__name__)
 
@@ -100,51 +101,93 @@ def pixel_solid_angle_sr(wcs2d: WCS) -> np.ndarray:
     return np.full((ny, nx), dx * dy * cos_dec, dtype=np.float64)
 
 
+def _brightness_temperature_jy_per_k(nu_hz: float, beam_area_sr: float) -> float:
+    """Jy per K via astropy's full brightness-temperature equivalency.
+
+    Matches kinms_test (uses observed line centre + cube beam area rather than
+    a Rayleigh-Jeans approximation at rest frequency).
+    """
+    freq = nu_hz * u.Hz
+    beam = beam_area_sr * u.steradian
+    equiv = u.brightness_temperature(freq, beam_area=beam)
+    return float((1.0 * u.K).to(u.Jy, equivalencies=equiv).value)
+
+
 def flux_int_from_moment0_kkms(
     moment0: np.ndarray,
     header: fits.Header,
     *,
-    nu_hz: float,
-) -> tuple[float, float, float]:
-    """
-    Integrated line flux (Jy·km/s) from a moment-0 map in K km/s.
+    nu_hz: float | None = None,
+    cube_header: fits.Header | None = None,
+) -> tuple[float, float, float, float]:
+    """Integrated line flux (Jy·km/s) from a moment-0 map in K km/s.
 
-    Returns (flux_jy_kms, bmaj_arcsec, bmin_arcsec).
+    Returns ``(flux_jy_kms, bmaj_arcsec, bmin_arcsec, nu_used_hz)``.
+
+    When ``cube_header`` is supplied the cube central observed frequency and
+    cube beam are used (see ``kinms_test/README.md`` Issue 1). Otherwise the
+    explicit ``nu_hz`` and moment-map beam (Rayleigh-Jeans approx) are used.
     """
-    bmaj = float(header.get("BMAJ", 0.0)) * 3600.0
-    bmin = float(header.get("BMIN", 0.0)) * 3600.0
-    if bmaj <= 0.0 or bmin <= 0.0:
+    if cube_header is not None:
+        bmaj_deg = float(cube_header.get("BMAJ", header.get("BMAJ", 0.0)))
+        bmin_deg = float(cube_header.get("BMIN", header.get("BMIN", 0.0)))
+    else:
+        bmaj_deg = float(header.get("BMAJ", 0.0))
+        bmin_deg = float(header.get("BMIN", 0.0))
+    if bmaj_deg <= 0.0 or bmin_deg <= 0.0:
         raise ValueError("FITS header missing valid BMAJ/BMIN for flux calibration")
+    bmaj = bmaj_deg * 3600.0
+    bmin = bmin_deg * 3600.0
     wcs2d = WCS(header).celestial
     wcs2d.array_shape = moment0.shape
     omega_pix = pixel_solid_angle_sr(wcs2d)
-    omega_beam = beam_solid_angle_sr(bmaj / 3600.0, bmin / 3600.0)
-    jy_k = jy_per_k_rj(nu_hz)
+
+    if cube_header is not None:
+        beam_area_sr = gaussian_beam_area_sr(bmaj_deg, bmin_deg)
+        nu_used = central_observed_frequency_hz(cube_header)
+        jy_k = _brightness_temperature_jy_per_k(nu_used, beam_area_sr)
+        omega_beam = beam_area_sr
+    else:
+        if nu_hz is None:
+            raise ValueError("nu_hz required when cube_header is not provided")
+        omega_beam = beam_solid_angle_sr(bmaj_deg, bmin_deg)
+        jy_k = jy_per_k_rj(nu_hz)
+        nu_used = float(nu_hz)
 
     m0 = np.asarray(moment0, dtype=np.float64)
     good = np.isfinite(m0) & (m0 > 0)
     if not np.any(good):
         raise ValueError("moment0 has no finite positive pixels")
 
-    # Ico [K km/s] × (Ω_pix/Ω_beam) × (Jy/K) → Jy·km/s per pixel, summed.
+    # Ico [K km/s per beam] × (Ω_pix/Ω_beam) × (Jy/beam per K) → Jy·km/s per pixel.
     contrib = m0[good] * (omega_pix[good] / omega_beam) * jy_k
-    return float(np.sum(contrib)), bmaj, bmin
+    return float(np.sum(contrib)), bmaj, bmin, nu_used
 
 
 def flux_int_from_cube_k(
     cube: np.ndarray,
     header: fits.Header,
     *,
-    nu_hz: float,
+    nu_hz: float | None = None,
     channel_width_kms: float,
+    cube_header: fits.Header | None = None,
 ) -> float:
     """Integrate a brightness-temperature cube (K) to Jy·km/s."""
     if cube.ndim != 3:
         raise ValueError(f"cube must be 3D; got shape {cube.shape}")
-    # Sum Tb over spectral axis, multiply by channel width → K km/s per pixel
     m0_equiv = np.nansum(cube, axis=0) * channel_width_kms
-    flux, _, _ = flux_int_from_moment0_kkms(m0_equiv, header, nu_hz=nu_hz)
+    flux, _, _, _ = flux_int_from_moment0_kkms(
+        m0_equiv,
+        header,
+        nu_hz=nu_hz,
+        cube_header=cube_header,
+    )
     return flux
+
+
+def channel_broadening_sigma_kms(channel_width_kms: float) -> float:
+    """RMS velocity smearing for a rectangular channel of width *channel_width_kms*."""
+    return float(channel_width_kms / np.sqrt(12.0))
 
 
 def estimate_gas_sigma_prior(
@@ -152,8 +195,15 @@ def estimate_gas_sigma_prior(
     moment2: np.ndarray,
     moment0: np.ndarray | None = None,
     floor_kms: float = 1.0,
+    channel_width_kms: float | None = None,
 ) -> float:
-    """Weighted median velocity dispersion (km/s) from moment2."""
+    """Estimate intrinsic turbulent velocity dispersion (km/s) for KinMS ``gasSigma``.
+
+    Moment-2 maps combine line broadening, beam smearing across velocity gradients,
+    and channelization. When the observed dispersion is comparable to the spectral
+    channel width, subtract the channel contribution in quadrature before using
+    the value as a microphysical ``gasSigma`` prior.
+    """
     m2 = np.asarray(moment2, dtype=np.float64)
     finite = np.isfinite(m2) & (m2 > 0)
     if moment0 is not None:
@@ -166,8 +216,19 @@ def estimate_gas_sigma_prior(
         raise ValueError("Insufficient finite/positive pixels in moment2")
     v = m2[weights > 0]
     w = weights[weights > 0]
-    sigma = _weighted_median(v, w)
-    return float(max(sigma, floor_kms))
+    sigma_obs = float(_weighted_median(v, w))
+
+    if channel_width_kms is not None and channel_width_kms > 0:
+        dv = float(channel_width_kms)
+        sigma_ch = channel_broadening_sigma_kms(dv)
+        if sigma_obs < 1.15 * dv:
+            # Observed dispersion is channel-limited; remove full channel width.
+            sigma_int = float(np.sqrt(max(sigma_obs**2 - dv**2, floor_kms**2)))
+        else:
+            sigma_int = float(np.sqrt(max(sigma_obs**2 - sigma_ch**2, floor_kms**2)))
+        return max(sigma_int, floor_kms)
+
+    return float(max(sigma_obs, floor_kms))
 
 
 def estimate_centroid_offset_arcsec(
@@ -175,24 +236,34 @@ def estimate_centroid_offset_arcsec(
     moment0: np.ndarray,
     wcs2d: WCS,
 ) -> tuple[float, float]:
-    """Flux-weighted (east, north) offset in arcsec from the map reference pixel."""
+    """Flux-weighted ``(dx, dy)`` offset in arcsec from the map ``CRPIX``.
+
+    Uses CDELT-signed offsets from CRPIX so the result is consistent with the
+    ``inClouds`` coordinate convention in :func:`kinms_grid.build_inclouds_from_moments`
+    (see ``kinms_test/README.md`` "Coordinate conventions"). A source exactly on
+    ``CRPIX`` returns ``(0, 0)``.
+
+    ``dx`` is RA-like (east-positive when ``CDELT1 < 0``, the usual FITS
+    convention); ``dy`` is Dec-like (north-positive).
+    """
     m0 = np.asarray(moment0, dtype=np.float64)
     finite = np.isfinite(m0) & (m0 > 0)
     if np.sum(finite) < 16:
         return 0.0, 0.0
-    y, x = np.indices(m0.shape)
-    x_f = x[finite]
-    y_f = y[finite]
+    y_idx, x_idx = np.indices(m0.shape)
+    x_pix = x_idx[finite].astype(np.float64)
+    y_pix = y_idx[finite].astype(np.float64)
     w_f = m0[finite]
-    east, north = _plane_offsets_arcsec(x_f, y_f, wcs2d)
-    # Reference: CRPIX (phase centre of image)
     ref_x = float(wcs2d.wcs.crpix[0]) - 1.0
     ref_y = float(wcs2d.wcs.crpix[1]) - 1.0
-    e_ref, n_ref = _plane_offsets_arcsec(
-        np.array([ref_x]), np.array([ref_y]), wcs2d
-    )
-    dx = float(np.average(east - e_ref[0], weights=w_f))
-    dy = float(np.average(north - n_ref[0], weights=w_f))
+    cdelt1 = float(wcs2d.wcs.cdelt[0])
+    cdelt2 = float(wcs2d.wcs.cdelt[1])
+    x_arcsec = (x_pix - ref_x) * cdelt1 * 3600.0
+    y_arcsec = (y_pix - ref_y) * cdelt2 * 3600.0
+    if cdelt1 < 0:
+        x_arcsec = -x_arcsec
+    dx = float(np.average(x_arcsec, weights=w_f))
+    dy = float(np.average(y_arcsec, weights=w_f))
     return dx, dy
 
 
@@ -202,17 +273,43 @@ def run_imaging_preflight(
     catalog_flux_jy_kms: float,
     f_rest_hz: float,
     fit_dv_kms: float | None = None,
-    gas_sigma_floor_kms: float = 1.0,
+    gas_sigma_floor_kms: float = 10.0,
 ) -> ImagingPreflightResult:
-    """Load imaging products and derive flux + KinMS-compatible seeds."""
+    """Load imaging products and derive flux + KinMS-compatible seeds.
+
+    When a cube path is supplied, flux calibration uses the cube central
+    observed frequency and the cube beam (kinms_test fix). Otherwise the
+    explicit ``f_rest_hz`` is used with the moment-map beam (Rayleigh-Jeans).
+    The default ``gas_sigma_floor_kms`` matches kinms_test (10 km/s).
+    """
     path_dict = {
         "cube": str(paths.cube) if paths.cube else None,
         "mom0": str(paths.mom0) if paths.mom0 else None,
         "mom1": str(paths.mom1) if paths.mom1 else None,
         "mom2": str(paths.mom2) if paths.mom2 else None,
     }
-    nu_hz = float(f_rest_hz)
-    jy_k = jy_per_k_rj(nu_hz)
+
+    cube_header: fits.Header | None = None
+    if paths.cube is not None and paths.cube.is_file():
+        cube_header = fits.getheader(paths.cube)
+
+    if cube_header is not None:
+        nu_hz = central_observed_frequency_hz(cube_header)
+        bmaj_deg_cube = float(cube_header.get("BMAJ", 0.0))
+        bmin_deg_cube = float(cube_header.get("BMIN", 0.0))
+        beam_area_sr = (
+            gaussian_beam_area_sr(bmaj_deg_cube, bmin_deg_cube)
+            if bmaj_deg_cube > 0 and bmin_deg_cube > 0
+            else 0.0
+        )
+        jy_k = (
+            _brightness_temperature_jy_per_k(nu_hz, beam_area_sr)
+            if beam_area_sr > 0
+            else jy_per_k_rj(nu_hz)
+        )
+    else:
+        nu_hz = float(f_rest_hz)
+        jy_k = jy_per_k_rj(nu_hz)
 
     flux_mom0: float | None = None
     flux_cube: float | None = None
@@ -224,18 +321,23 @@ def run_imaging_preflight(
     if paths.mom0 is not None and paths.mom0.is_file():
         m0, wcs2d = load_moment_fits(paths.mom0)
         hdr = fits.getheader(paths.mom0)
-        flux_mom0, bmaj, bmin = flux_int_from_moment0_kkms(m0, hdr, nu_hz=nu_hz)
+        flux_mom0, bmaj, bmin, nu_hz = flux_int_from_moment0_kkms(
+            m0, hdr, nu_hz=nu_hz, cube_header=cube_header
+        )
 
         if paths.mom1 is not None and paths.mom1.is_file():
             m1, _ = load_moment_fits(paths.mom1)
             geom = estimate_geometry_prior(moment1=m1, moment0=m0, wcs2d=wcs2d)
             rscale = estimate_r_scale_prior(moment0=m0, wcs2d=wcs2d)
             kwin = estimate_kinematic_window_prior(moment1=m1, moment0=m0)
-            gas_sigma = 10.0
+            gas_sigma = gas_sigma_floor_kms
             if paths.mom2 is not None and paths.mom2.is_file():
                 m2, _ = load_moment_fits(paths.mom2)
                 gas_sigma = estimate_gas_sigma_prior(
-                    moment2=m2, moment0=m0, floor_kms=gas_sigma_floor_kms
+                    moment2=m2,
+                    moment0=m0,
+                    floor_kms=gas_sigma_floor_kms,
+                    channel_width_kms=paths.channel_width_kms or fit_dv_kms,
                 )
             dx, dy = estimate_centroid_offset_arcsec(moment0=m0, wcs2d=wcs2d)
             line_width = 2.0 * kwin.line_half_width_kms
@@ -254,13 +356,19 @@ def run_imaging_preflight(
 
     if paths.cube is not None and paths.cube.is_file():
         cube = np.asarray(fits.getdata(paths.cube), dtype=np.float64)
-        hdr = fits.getheader(paths.cube)
+        hdr_cube = fits.getheader(paths.cube)
         chw = paths.channel_width_kms
         if chw is None:
-            raise ValueError("channel_width_kms required for cube flux integration")
+            chw = abs(float(hdr_cube["CDELT3"]))
         flux_cube = flux_int_from_cube_k(
-            cube, hdr, nu_hz=nu_hz, channel_width_kms=chw
+            cube,
+            hdr_cube,
+            channel_width_kms=chw,
+            cube_header=hdr_cube,
         )
+        if bmaj is None or bmin is None:
+            bmaj = float(hdr_cube.get("BMAJ", 0.0)) * 3600.0
+            bmin = float(hdr_cube.get("BMIN", 0.0)) * 3600.0
         if flux_mom0 is not None and flux_mom0 > 0:
             ratio_cube_mom0 = flux_cube / flux_mom0
 
@@ -311,7 +419,10 @@ def format_imaging_preflight_log(result: ImagingPreflightResult) -> str:
             f"  beam: BMAJ={result.beam_bmaj_arcsec:.3f}\" "
             f"BMIN={result.beam_bmin_arcsec:.3f}\""
         )
-    lines.append(f"  nu_rest={result.nu_hz:.6e} Hz  Jy/K (RJ)={result.jy_per_k:.6g}")
+    lines.append(
+        f"  nu_obs={result.nu_hz:.6e} Hz  Jy/K={result.jy_per_k:.6g} "
+        f"(cube-derived when available; RJ fallback otherwise)"
+    )
     if result.flux_int_mom0_jy_kms is not None:
         lines.append(f"  flux_int_imaging_mom0_jy_kms: {result.flux_int_mom0_jy_kms:.6f}")
     if result.flux_int_cube_jy_kms is not None:
