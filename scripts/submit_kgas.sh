@@ -15,8 +15,16 @@
 # FITS, preflight PNGs, diagnostics/) back to RESULTS_BASE regardless of exit code.
 #
 # Usage:
-#   bash submit_kgas.sh          # submit all galaxies
-#   bash submit_kgas.sh --dry    # print commands without submitting
+#   bash submit_kgas.sh [OPTIONS] [GALAXY ...] [PROFILE]
+#
+#   PROFILE (optional last arg): diagnose_30kms | diagnose_5kms_frozen |
+#                                open_explore | production
+#   GALAXY: KGAS066 or KILOGAS066 (omit to submit all in GALAXY_CONFIGS)
+#   OPTIONS: --dry  print commands without submitting
+#
+# Examples:
+#   bash submit_kgas.sh --dry KGAS066 diagnose_5kms_frozen
+#   PIPELINE_PROFILE=open_explore bash submit_kgas.sh KILOGAS007
 
 set -euo pipefail
 
@@ -57,7 +65,44 @@ RUN_UVKIN="${UVKIN_DIR}/scripts/run_uvkin.sh"
 #   open_explore   — wide priors, ~10 km/s bin (spectral_bin_factor: 8), no
 #                    imaging seeding; explores the box prior end-to-end.
 #   production     — uvkin_settings.yaml defaults; no imaging seeding.
-PIPELINE_PROFILE="${PIPELINE_PROFILE:-diagnose_30kms}"
+VALID_PROFILES="diagnose_30kms diagnose_5kms_frozen open_explore production"
+
+# ── Parse CLI (after defaults; env PIPELINE_PROFILE is the fallback) ──
+DRY_RUN=false
+GALAXY_FILTER=()
+_ARGS_PROFILE=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry)
+            DRY_RUN=true
+            shift
+            ;;
+        diagnose_30kms|diagnose_5kms_frozen|open_explore|production)
+            _ARGS_PROFILE="$1"
+            shift
+            ;;
+        KGAS*)
+            GALAXY_FILTER+=("KILOGAS${1#KGAS}")
+            shift
+            ;;
+        KILOGAS*)
+            GALAXY_FILTER+=("$1")
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            echo "Usage: submit_kgas.sh [--dry] [GALAXY ...] [PROFILE]" >&2
+            echo "Valid profiles: ${VALID_PROFILES}" >&2
+            exit 1
+            ;;
+    esac
+done
+if [[ -n "${_ARGS_PROFILE}" ]]; then
+    PIPELINE_PROFILE="${_ARGS_PROFILE}"
+else
+    PIPELINE_PROFILE="${PIPELINE_PROFILE:-diagnose_30kms}"
+fi
+
 PROFILE_FLAGS=()
 case "${PIPELINE_PROFILE}" in
     diagnose_30kms)
@@ -89,10 +134,15 @@ case "${PIPELINE_PROFILE}" in
         MAX_STEPS="${MAX_STEPS:-40000}"
         PROFILE_FLAGS=(--no-preflight-cube)
         ;;
-    production|*)
+    production)
         PIPELINE_SETTINGS="${UVKIN_DIR}/config/uvkin_settings.yaml"
         MAX_STEPS="${MAX_STEPS:-10000}"
         PROFILE_FLAGS=(--no-preflight-cube)
+        ;;
+    *)
+        echo "Unknown profile: ${PIPELINE_PROFILE}" >&2
+        echo "Valid profiles: ${VALID_PROFILES}" >&2
+        exit 1
         ;;
 esac
 
@@ -108,9 +158,24 @@ if [[ -n "${EXTRA_RUN_ARGS_OVERRIDE:-}" ]]; then
     EXTRA_RUN_ARGS+=(${EXTRA_RUN_ARGS_OVERRIDE})
 fi
 
-DRY_RUN=false
-if [[ "${1:-}" == "--dry" ]]; then
-    DRY_RUN=true
+# Restrict to requested galaxies when filters were passed on the CLI.
+GALAXIES_TO_RUN=("${GALAXY_CONFIGS[@]}")
+if [[ ${#GALAXY_FILTER[@]} -gt 0 ]]; then
+    GALAXIES_TO_RUN=()
+    for _req in "${GALAXY_FILTER[@]}"; do
+        _found=false
+        for _g in "${GALAXY_CONFIGS[@]}"; do
+            if [[ "${_g}" == "${_req}" ]]; then
+                GALAXIES_TO_RUN+=("${_g}")
+                _found=true
+                break
+            fi
+        done
+        if [[ "${_found}" == false ]]; then
+            echo "Unknown galaxy ${_req}; configured: ${GALAXY_CONFIGS[*]}" >&2
+            exit 1
+        fi
+    done
 fi
 
 echo "=============================================="
@@ -131,7 +196,7 @@ if [[ "${DRY_RUN}" == false ]]; then
     canfar auth login
 fi
 
-for GAL in "${GALAXY_CONFIGS[@]}"; do
+for GAL in "${GALAXIES_TO_RUN[@]}"; do
     DATA="${VIS_DIR}/${GAL}.npz"
     OUTDIR="${RESULTS_BASE}/${GAL}"
     # KILOGAS007 -> KGAS007 (must match keys under galaxies: in uvkin_settings.yaml)
