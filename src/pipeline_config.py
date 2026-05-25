@@ -15,6 +15,7 @@ import yaml
 from config_schema import (
     AggregationConfig,
     GalaxyConfig,
+    ImagingProductsConfig,
     McmcBoundsConfig,
     McmcSamplerConfig,
     PipelineSettings,
@@ -156,6 +157,24 @@ def _parse_aggregation(m: Mapping[str, Any]) -> AggregationConfig:
     )
 
 
+def _parse_imaging_products(m: Mapping[str, Any] | None) -> ImagingProductsConfig | None:
+    if m is None or (isinstance(m, Mapping) and not m):
+        return None
+    if not isinstance(m, Mapping):
+        raise ValueError("imaging_products must be a mapping")
+    chw_raw = m.get("channel_width_kms", None)
+    chw = None if chw_raw is None else float(chw_raw)
+    if chw is not None and chw <= 0.0:
+        raise ValueError("imaging_products.channel_width_kms must be > 0")
+    return ImagingProductsConfig(
+        cube=m.get("cube"),
+        mom0=m.get("mom0"),
+        mom1=m.get("mom1"),
+        mom2=m.get("mom2"),
+        channel_width_kms=chw,
+    )
+
+
 def _parse_galaxy(
     kgas_id: str,
     m: Mapping[str, Any],
@@ -188,6 +207,7 @@ def _parse_galaxy(
         raise ValueError(f"galaxies.{kgas_id}.vmax_seed_kms must be > 0")
     if vel_buffer_kms is not None and vel_buffer_kms < 0.0:
         raise ValueError(f"galaxies.{kgas_id}.vel_buffer_kms must be >= 0")
+    imaging = _parse_imaging_products(m.get("imaging_products"))
     return GalaxyConfig(
         kilogas_archive_id=str(m["kilogas_archive_id"]),
         data_path_default=str(m["data_path_default"]),
@@ -204,6 +224,7 @@ def _parse_galaxy(
         ra_deg=ra_deg,
         dec_deg=dec_deg,
         vhi_kms=vhi_kms,
+        imaging_products=imaging,
     )
 
 

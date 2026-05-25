@@ -54,6 +54,21 @@ def test_load_open_explore_settings():
     assert pipe.mcmc_bounds.dx_half_width_arcsec == pytest.approx(12.8)
 
 
+def test_load_diagnose_30kms_settings():
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "config"
+        / "uvkin_settings_diagnose_30kms.yaml"
+    )
+    pipe = load_pipeline_settings(path)
+    assert pipe.aggregation.spectral_bin_factor == 24
+    g66 = pipe.galaxies["KGAS066"]
+    assert g66.imaging_products is not None
+    assert g66.imaging_products.mom0 is not None
+    assert "KGAS66" in g66.imaging_products.mom0
+    assert g66.imaging_products.channel_width_kms == pytest.approx(30.0)
+
+
 def test_load_explicit_path():
     here = Path(__file__).resolve().parent.parent / "config" / "uvkin_settings.yaml"
     pipe = load_pipeline_settings(here)

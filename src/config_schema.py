@@ -7,6 +7,17 @@ from typing import Dict, Tuple
 
 
 @dataclass(frozen=True)
+class ImagingProductsConfig:
+    """Optional KILOGAS imaging product paths for diagnostic preflight."""
+
+    cube: str | None = None
+    mom0: str | None = None
+    mom1: str | None = None
+    mom2: str | None = None
+    channel_width_kms: float | None = None
+
+
+@dataclass(frozen=True)
 class GalaxyConfig:
     """
     Per-galaxy catalog entry (notebook + batch runs).
@@ -37,6 +48,7 @@ class GalaxyConfig:
     dec_deg: float | None = None
     # HI recession velocity (km/s) when available; provenance only.
     vhi_kms: float | None = None
+    imaging_products: ImagingProductsConfig | None = None
 
     @property
     def flux_int(self) -> float:

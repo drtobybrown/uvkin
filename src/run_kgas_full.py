@@ -88,6 +88,36 @@ parser.add_argument(
     help="Skip saving preflight PNGs (preflight_uv_hist2d.png, preflight_snr_profile.png)",
 )
 parser.add_argument(
+    "--no-mcmc-diagnostics",
+    action="store_true",
+    help="Skip post-MCMC chain summary plots under outdir/diagnostics/",
+)
+parser.add_argument(
+    "--imaging-cube",
+    default=None,
+    help="Path to clipped cube FITS (K) for imaging preflight",
+)
+parser.add_argument(
+    "--imaging-mom0",
+    default=None,
+    help="Path to moment-0 FITS (K km/s) for imaging preflight",
+)
+parser.add_argument(
+    "--imaging-mom1",
+    default=None,
+    help="Path to moment-1 FITS (km/s) for imaging preflight",
+)
+parser.add_argument(
+    "--imaging-mom2",
+    default=None,
+    help="Path to moment-2 FITS (km/s) for imaging preflight",
+)
+parser.add_argument(
+    "--use-imaging-seeds",
+    action="store_true",
+    help="Replace catalogue MCMC seeds with imaging-derived values (YAML/CLI paths)",
+)
+parser.add_argument(
     "--kgas-id",
     required=True,
     metavar="ID",
@@ -152,6 +182,8 @@ LINE_WIDTH_KMS = (
     if args.line_width_kms is not None
     else (2.0 * VMAX)
 )
+GAS_SIGMA_INIT = 10.0
+_imaging_preflight_result = None
 
 if args.initial_ball_fraction is not None:
     _ibf = float(args.initial_ball_fraction)
@@ -194,6 +226,19 @@ from uv_aggregate import (
     extract_time_and_baseline,
 )
 from uvfit import UVDataset, Fitter
+
+from git_info import format_git_log_block, uvfit_git_revision, uvkin_git_revision
+from imaging_preflight import (
+    format_imaging_preflight_log,
+    resolve_imaging_paths,
+    run_imaging_preflight,
+)
+from mcmc_diagnostics import (
+    chain_summary_text,
+    pearson_correlations,
+    prior_wall_fractions,
+    write_mcmc_diagnostics,
+)
 
 PRECISION = "single"  # float32 / complex64 everywhere; single canonical contract
 
@@ -352,6 +397,45 @@ log.info(
     "cellsize=%.3f (kgas_id=%s)",
     VSYS, VMAX, R_SCALE, PA_INIT, INC_INIT, CELLSIZE, args.kgas_id,
 )
+for _line in format_git_log_block().splitlines():
+    log.info("  %s", _line)
+
+# Optional early imaging preflight (seeds + flux before spectral trim)
+_imaging_paths = resolve_imaging_paths(
+    galaxy_imaging=_cfg.imaging_products,
+    cli_cube=args.imaging_cube,
+    cli_mom0=args.imaging_mom0,
+    cli_mom1=args.imaging_mom1,
+    cli_mom2=args.imaging_mom2,
+)
+if _imaging_paths is not None:
+    try:
+        _imaging_preflight_result = run_imaging_preflight(
+            _imaging_paths,
+            catalog_flux_jy_kms=float(_cfg.flux_int_jy_kms),
+            f_rest_hz=F_REST,
+            gas_sigma_floor_kms=1.0,
+        )
+        if args.use_imaging_seeds and _imaging_preflight_result.seeds is not None:
+            _s = _imaging_preflight_result.seeds
+            PA_INIT = _s.pa_deg
+            INC_INIT = _s.inc_deg
+            VSYS = _s.vsys_kms
+            VMAX = _s.vmax_kms
+            R_SCALE = _s.r_scale_arcsec
+            GAS_SIGMA_INIT = _s.gas_sigma_kms
+            if args.line_width_kms is None:
+                LINE_WIDTH_KMS = _s.line_width_kms
+            if args.vsys is None:
+                VEL_BUFFER_EFFECTIVE = _s.vel_buffer_kms
+            log.info(
+                "Applied --use-imaging-seeds: vsys=%.3f vmax=%.3f r_scale=%.3f "
+                "pa=%.3f inc=%.3f gas_sigma=%.3f line_width=%.3f",
+                VSYS, VMAX, R_SCALE, PA_INIT, INC_INIT, GAS_SIGMA_INIT, LINE_WIDTH_KMS,
+            )
+    except (OSError, ValueError) as exc:
+        log.warning("Imaging preflight failed (continuing without): %s", exc)
+        _imaging_preflight_result = None
 
 # ---------------------------------------------------------------------------
 # Load and trim data
@@ -507,6 +591,15 @@ _centroid_seed = (
     if _cfg.phase_centroid_seed_arcsec is not None
     else AGGREGATION.phase_centroid_seed_arcsec
 )
+if (
+    _imaging_preflight_result is not None
+    and _imaging_preflight_result.seeds is not None
+    and args.use_imaging_seeds
+):
+    _centroid_seed = (
+        _imaging_preflight_result.seeds.dx_arcsec,
+        _imaging_preflight_result.seeds.dy_arcsec,
+    )
 log.info(
     "Phase centre seed (dx, dy) = (%.5f, %.5f) arcsec — seeded into MCMC "
     "`dx`, `dy` parameters (no pre-fit centroid).",
@@ -605,10 +698,54 @@ log.info(
 )
 
 mcmc_flux_jy_kms = float(_cfg.flux_int_jy_kms)
-log.info(
-    "MCMC Flux parameter standardized to Integrated Jy·km/s. Initial seed: %s.",
-    mcmc_flux_jy_kms,
-)
+if (
+    _imaging_preflight_result is not None
+    and _imaging_preflight_result.flux_int_mom0_jy_kms is not None
+    and args.use_imaging_seeds
+):
+    mcmc_flux_jy_kms = float(_imaging_preflight_result.flux_int_mom0_jy_kms)
+    log.info(
+        "MCMC flux seed from imaging mom0: %.6f Jy·km/s (catalog was %.6f)",
+        mcmc_flux_jy_kms,
+        float(_cfg.flux_int_jy_kms),
+    )
+else:
+    log.info(
+        "MCMC Flux parameter standardized to Integrated Jy·km/s. Initial seed: %s.",
+        mcmc_flux_jy_kms,
+    )
+
+# Full imaging preflight log (includes dv alignment after binning)
+if _imaging_paths is not None:
+    try:
+        if _imaging_preflight_result is None:
+            _imaging_preflight_result = run_imaging_preflight(
+                _imaging_paths,
+                catalog_flux_jy_kms=float(_cfg.flux_int_jy_kms),
+                f_rest_hz=F_REST,
+                fit_dv_kms=current_dv_kms,
+                gas_sigma_floor_kms=_gas_sigma_floor,
+            )
+        else:
+            _imaging_preflight_result.fit_dv_kms = current_dv_kms
+        log.info("=" * 60)
+        for _line in format_imaging_preflight_log(_imaging_preflight_result).splitlines():
+            log.info("%s", _line)
+        if _imaging_preflight_result.seeds is not None:
+            _s = _imaging_preflight_result.seeds
+            log.info(
+                "Seed vs catalog deltas: d_vsys=%+.2f d_vmax=%+.2f d_r_scale=%+.2f "
+                "d_pa=%+.2f d_inc=%+.2f",
+                _s.vsys_kms - float(_cfg.vsys),
+                _s.vmax_kms - float(_cfg.vmax_seed_kms or VMAX),
+                _s.r_scale_arcsec - float(_cfg.r_scale),
+                _s.pa_deg - float(_cfg.pa_init),
+                _s.inc_deg - float(_cfg.inc_init),
+            )
+        log.info("=" * 60)
+    except (OSError, ValueError) as exc:
+        log.warning("Imaging preflight (post-bin) failed: %s", exc)
+
 if abs(current_dv_kms - _cfg.channel_width_kms) > 0.01:
     log.warning(
         "Median dv on fit grid (%.6f km/s) != catalog channel_width_kms (%.6f); "
@@ -884,18 +1021,41 @@ fitter = Fitter(
     weight_scale_factor=_weight_scale,
 )
 
+log.info(
+    "KinMS setup: dv=%.3f km/s  n_chan=%d  vSys=%.3f  intFlux_seed=%.6f Jy·km/s  "
+    "r_scale_seed=%.3f arcsec  vmax_seed=%.3f km/s  gas_sigma_seed=%.3f km/s",
+    current_dv_kms,
+    n_chan_trim,
+    VSYS,
+    mcmc_flux_jy_kms,
+    R_SCALE,
+    VMAX,
+    GAS_SIGMA_INIT,
+)
+
 init_params = {
     "inc": INC_INIT,
     "pa": PA_INIT,
     "flux": mcmc_flux_jy_kms,
     "vsys": float(VSYS),
-    "gas_sigma": 10.0,
+    "gas_sigma": GAS_SIGMA_INIT,
     "gamma": 0.5,
     "dx": float(_centroid_seed[0]),
     "dy": float(_centroid_seed[1]),
     "vmax": float(VMAX),
     "r_scale": float(R_SCALE),
 }
+if (
+    _imaging_preflight_result is not None
+    and _imaging_preflight_result.seeds is not None
+    and args.use_imaging_seeds
+):
+    _s = _imaging_preflight_result.seeds
+    init_params["dx"] = _s.dx_arcsec
+    init_params["dy"] = _s.dy_arcsec
+    init_params["gas_sigma"] = max(_s.gas_sigma_kms, _gas_sigma_floor)
+
+init_params_seed = dict(init_params)
 
 frozen_params = model.frozen_params
 if frozen_params:
@@ -910,6 +1070,34 @@ if frozen_params:
 
 n_data = 2 * uvdata.vis_data.size
 n_params = len(init_params)
+param_names_list = list(init_params.keys())
+
+# Pre-MCMC chi2 at seeds and degeneracy probes
+_p0 = np.array([init_params[n] for n in param_names_list])
+_chi2_seed = float(fitter._objective(_p0, param_names_list))
+_rchi2_seed = _chi2_seed / max(n_data - n_params, 1)
+log.info(
+    "Likelihood at seeds: chi2=%.6f  reduced_chi2=%.6f",
+    _chi2_seed,
+    _rchi2_seed,
+)
+
+log.info("Degeneracy probes (chi2 at perturbed seeds, others fixed):")
+for label, overrides in (
+    ("flux×0.1", {"flux": init_params["flux"] * 0.1}),
+    ("flux×10", {"flux": init_params["flux"] * 10.0}),
+    ("vmax×0.5", {"vmax": init_params["vmax"] * 0.5}),
+    ("vmax×2", {"vmax": init_params["vmax"] * 2.0}),
+    ("r_scale×0.5", {"r_scale": init_params["r_scale"] * 0.5}),
+    ("r_scale×2", {"r_scale": init_params["r_scale"] * 2.0}),
+    ("gamma=0", {"gamma": 0.0}),
+    ("gamma=1", {"gamma": 1.0}),
+):
+    _probe = dict(init_params)
+    _probe.update(overrides)
+    _pv = np.array([_probe[n] for n in param_names_list])
+    _c2 = float(fitter._objective(_pv, param_names_list))
+    log.info("  %s: chi2=%.6f  rchi2=%.6f", label, _c2, _c2 / max(n_data - n_params, 1))
 
 # ---------------------------------------------------------------------------
 # MCMC
@@ -962,7 +1150,89 @@ if result_mcmc.chains is not None:
 if result_mcmc.converged is not None:
     log.info("Converged: %s", result_mcmc.converged)
 if result_mcmc.autocorr_time is not None:
-    log.info("Autocorrelation time: %s", result_mcmc.autocorr_time)
+    _tau = np.asarray(result_mcmc.autocorr_time, dtype=np.float64)
+    log.info("Autocorrelation time (labeled):")
+    for _name, _t in zip(param_names_list, _tau):
+        log.info("  %s: %.2f", _name, float(_t))
+    _imax = int(np.argmax(_tau))
+    _tau_max = float(_tau[_imax])
+    _tau_max_name = param_names_list[_imax]
+    log.info(
+        "tau_max: %s = %.2f  steps_needed (50×tau_max): %.0f",
+        _tau_max_name,
+        _tau_max,
+        50.0 * _tau_max,
+    )
+
+# Seed vs MAP comparison
+log.info("Seed vs MAP parameters:")
+for _name in param_names_list:
+    _seed_v = init_params_seed[_name]
+    _map_v = result_mcmc.params[_name]
+    _pct = (
+        100.0 * (_map_v - _seed_v) / _seed_v
+        if abs(_seed_v) > 1e-30
+        else float("nan")
+    )
+    log.info(
+        "  %s: seed=%.6g  MAP=%.6g  delta%%=%+.2f",
+        _name,
+        _seed_v,
+        _map_v,
+        _pct,
+    )
+log.info(
+    "Likelihood: chi2_seed=%.6f  rchi2_seed=%.6f  chi2_MAP=%.6f  rchi2_MAP=%.6f",
+    _chi2_seed,
+    _rchi2_seed,
+    result_mcmc.chi2,
+    result_mcmc.reduced_chi2,
+)
+
+if _imaging_preflight_result is not None:
+    _ref_flux = (
+        _imaging_preflight_result.flux_int_mom0_jy_kms
+        or _imaging_preflight_result.flux_int_cube_jy_kms
+    )
+    if _ref_flux is not None and "flux" in result_mcmc.params:
+        log.info(
+            "Post-fit flux audit: imaging=%.6f  catalog=%.6f  seed=%.6f  MAP=%.6f  "
+            "MAP/imaging=%.4f  MAP/catalog=%.4f",
+            _ref_flux,
+            float(_cfg.flux_int_jy_kms),
+            init_params_seed.get("flux", mcmc_flux_jy_kms),
+            result_mcmc.params["flux"],
+            result_mcmc.params["flux"] / _ref_flux,
+            result_mcmc.params["flux"] / float(_cfg.flux_int_jy_kms),
+        )
+
+if result_mcmc.chains is not None:
+    _flat = result_mcmc.chains.reshape(-1, result_mcmc.chains.shape[-1])
+    _walls = prior_wall_fractions(_flat, empirical_bounds, param_names_list)
+    log.info("Final prior wall fractions (5%% edge bins):")
+    for _name in param_names_list:
+        if _name not in _walls:
+            continue
+        _w = _walls[_name]
+        log.info(
+            "  %s: frac_near_lo=%.3f  frac_near_hi=%.3f",
+            _name,
+            _w["frac_near_lo"],
+            _w["frac_near_hi"],
+        )
+    _cors = pearson_correlations(_flat, param_names_list, ("flux", "gamma", "vmax", "r_scale"))
+    log.info("Pearson r (flux, gamma, vmax, r_scale):")
+    for _pair, _r in sorted(_cors.items()):
+        log.info("  %s: %.4f", _pair, _r)
+    _summary = chain_summary_text(
+        chains=result_mcmc.chains,
+        param_names=param_names_list,
+        bounds=empirical_bounds,
+        init_params=init_params_seed,
+        map_params=result_mcmc.params,
+    )
+    for _line in _summary.splitlines():
+        log.info("%s", _line)
 
 # ---------------------------------------------------------------------------
 # Save results
@@ -989,7 +1259,21 @@ save_dict = dict(
     aggregation_apply_uv_binning=AGGREGATION.apply_uv_binning,
     aggregation_apply_time_averaging=AGGREGATION.apply_time_averaging,
     phase_centroid_seed_arcsec=np.asarray(_centroid_seed, dtype=np.float64),
+    init_param_names=np.array(list(init_params_seed.keys())),
+    init_param_values=np.array(list(init_params_seed.values())),
+    empirical_bounds=np.array(empirical_bounds, dtype=object),
+    chi2_seed=_chi2_seed,
+    reduced_chi2_seed=_rchi2_seed,
 )
+if _imaging_preflight_result is not None:
+    save_dict["imaging_preflight"] = np.array(
+        _imaging_preflight_result.to_dict(), dtype=object
+    )
+for _label, _rev_fn in (("uvkin", uvkin_git_revision), ("uvfit", uvfit_git_revision)):
+    _rev = _rev_fn()
+    if _rev is not None:
+        save_dict[f"git_{_label}_sha"] = _rev.sha
+        save_dict[f"git_{_label}_dirty"] = _rev.dirty
 if result_mcmc.autocorr_time is not None:
     save_dict["autocorr_time"] = result_mcmc.autocorr_time
 if result_mcmc.converged is not None:
@@ -997,6 +1281,16 @@ if result_mcmc.converged is not None:
 
 np.savez(outdir / "result.npz", **save_dict)
 log.info("Results saved to %s", outdir / "result.npz")
+
+if result_mcmc.chains is not None and not args.no_mcmc_diagnostics:
+    write_mcmc_diagnostics(
+        outdir,
+        chains=result_mcmc.chains,
+        param_names=param_names_list,
+        bounds=empirical_bounds,
+        init_params=init_params_seed,
+        map_params=result_mcmc.params,
+    )
 
 best_cube = model.generate_cube(result_mcmc.params)
 cube_fits_path = outdir / "bestfit_cube.fits"
