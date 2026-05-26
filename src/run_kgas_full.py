@@ -794,6 +794,7 @@ _native_grid = NativeUVGrid(
     u_m=np.asarray(u_m_all),
     v_m=np.asarray(v_m_all),
     freqs_hz=np.asarray(freqs_trim, dtype=np.float64),
+    weights=np.asarray(weights_trim),
     vel_kms=np.asarray(vel_trim, dtype=np.float64),
     time_s=time_arr,
     baseline_ids=baseline_arr,

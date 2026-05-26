@@ -56,6 +56,7 @@ def test_aggregation_aware_fitter_matches_binned_degrid():
         u_m=u_m,
         v_m=v_m,
         freqs_hz=freqs.astype(np.float64),
+        weights=weights,
         vel_kms=vel.astype(np.float64),
         time_s=None,
         baseline_ids=None,

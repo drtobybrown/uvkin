@@ -19,6 +19,7 @@ class NativeUVGrid:
     u_m: np.ndarray
     v_m: np.ndarray
     freqs_hz: np.ndarray
+    weights: np.ndarray
     vel_kms: np.ndarray | None = None
     time_s: np.ndarray | None = None
     baseline_ids: np.ndarray | None = None
@@ -66,18 +67,31 @@ class AggregationAwareFitter(Fitter):
             phase_shift_arcsec=phase_shift,
         )
 
-        w_native = np.ones_like(model_native, dtype=np.float64)
+        # Use observed native weights so time/UV bin geometry matches the data
+        # (unit weights change weighted-mean u,v and yield a different bin count).
+        w_agg = np.asarray(self._native.weights, dtype=np.float64)
+        if w_agg.shape != model_native.shape:
+            raise ValueError(
+                f"native weights shape {w_agg.shape} != model_native {model_native.shape}"
+            )
         u_b, v_b, vis_b, w_b, _freqs_b, _vel_b, meta = aggregate_visibilities(
             self._native.u_m,
             self._native.v_m,
             model_native,
-            w_native,
+            w_agg,
             self._native.freqs_hz,
             config=self._aggregation,
             vel=self._native.vel_kms,
             time_s=self._native.time_s,
             baseline_ids=self._native.baseline_ids,
         )
+
+        obs = self.uvdata.vis_data
+        if vis_b.shape != obs.shape:
+            raise ValueError(
+                f"Model aggregated shape {vis_b.shape} != observed {obs.shape}; "
+                "aggregation geometry mismatch (check native weights / config)."
+            )
 
         if not self._logged_shape:
             import logging
