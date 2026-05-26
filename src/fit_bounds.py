@@ -61,6 +61,7 @@ def get_empirical_bounds(
     mcmc_bounds: McmcBoundsConfig | None = None,
     flux_bounds: tuple[float, float] | None = None,
     gas_sigma_floor: float | None = None,
+    r_scale_floor_arcsec: float | None = None,
     phase_centroid_seed_arcsec: tuple[float, float] = (0.0, 0.0),
 ) -> dict[str, tuple[float, float]]:
     """
@@ -161,6 +162,13 @@ def get_empirical_bounds(
     rs_lo, rs_hi = cfg.r_scale_multipliers
     b_vmax = (vm_lo * vmax_ref, vm_hi * vmax_ref)
     b_r_scale = (rs_lo * r_scale_ref, rs_hi * r_scale_ref)
+    if r_scale_floor_arcsec is not None and r_scale_floor_arcsec > b_r_scale[0]:
+        b_r_scale = (float(r_scale_floor_arcsec), b_r_scale[1])
+    if b_r_scale[0] >= b_r_scale[1]:
+        raise ValueError(
+            f"r_scale bounds invalid after floor: {b_r_scale}; "
+            f"ref={r_scale_ref}, floor={r_scale_floor_arcsec}"
+        )
 
     return {
         "inc": (lo_i, hi_i),

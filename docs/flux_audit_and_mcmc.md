@@ -333,6 +333,18 @@ python src/run_kgas_full.py \
 
 ARC: `bash scripts/submit_kgas.sh KGAS066 diagnose_5kms_frozen`
 
+### Three diagnostic cubes (do not compare blindly)
+
+| Product | Path | Grid | Model | Typical flux |
+|---------|------|------|-------|----------------|
+| Preflight inClouds | `preflight_inclouds/preflight_inclouds_simcube.fits` | DR1 135×135, 17×30 km/s | mom0/mom1 clouds | ~mom0 (~92 Jy·km/s) |
+| Visibility MAP | `bestfit_cube.fits` | 256×256, 125×~5 km/s | gNFW parametric | visibility MAP (~28 Jy·km/s) |
+| MAP on imaging grid | `bestfit_on_imaging_grid/bestfit_imaging_simcube.fits` | DR1 135×135, 17×30 km/s | gNFW MAP kinematics | visibility MAP flux, imaging Δv |
+
+`bestfit_cube.fits` uses the **observed cube WCS for sky axes** but sets **`CDELT3` from the binned visibility `vel_trim`** (not the 30 km/s imaging spacing). Compare morphology to DR1 using **`bestfit_on_imaging_grid/`** PNGs (same footprint as preflight).
+
+Frozen geometry runs disable `--imaging-tight-priors` automatically; `r_scale` lower bound is at least `max(0.5×seed, 0.8×BMAJ)`.
+
 ---
 
 ## Pre-fit warnings (line vs off-line)

@@ -199,6 +199,46 @@ def test_wcs_header_for_sim_cube_shifts_crpix_when_shape_differs():
     assert new_hdr["BUNIT"] == "Jy/beam"
 
 
+def test_wcs_header_spectral_axis_from_vel_centers():
+    obs_header = _make_obs_cube_header(nchan=17, cdelt3_kms=31.35)
+    nchan_sim = 125
+    dv = 5.08
+    v0 = 7972.0
+    vel = v0 + np.arange(nchan_sim, dtype=np.float64) * dv
+    sim_shape = (nchan_sim, 135, 135)
+    hdr = wcs_header_for_sim_cube(
+        obs_header, sim_shape, bunit="Jy/beam", vel_centers_kms=vel
+    )
+    assert hdr["NAXIS3"] == nchan_sim
+    assert hdr["CDELT3"] == pytest.approx(dv, rel=1e-6)
+    assert hdr["CRVAL3"] == pytest.approx(v0, rel=1e-6)
+    assert hdr["CRPIX3"] == pytest.approx(1.0)
+
+
+def test_write_simcube_fits_sets_cdelt3_for_binned_grid(tmp_path):
+    obs_header = _make_obs_cube_header(nx=32, ny=32, nchan=17)
+    obs_path = tmp_path / "obs.fits"
+    fits.PrimaryHDU(
+        data=np.zeros((17, 32, 32), dtype=np.float32), header=obs_header
+    ).writeto(obs_path)
+
+    nchan = 125
+    dv = 5.0797
+    vel = 7972.0 + np.arange(nchan) * dv
+    sim_internal = np.ones((32, 32, nchan), dtype=np.float32)
+    out_path = tmp_path / "sim_binned.fits"
+    write_simcube_fits(
+        sim_internal,
+        obs_cube_path=obs_path,
+        output_path=out_path,
+        vel_centers_kms=vel,
+    )
+    with fits.open(out_path) as hdul:
+        hdr = hdul[0].header
+        assert hdr["NAXIS3"] == nchan
+        assert hdr["CDELT3"] == pytest.approx(dv, rel=1e-4)
+
+
 def test_moment_priors_constructible():
     p = MomentPriors(
         posang_deg=205.0,

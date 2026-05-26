@@ -123,6 +123,7 @@ case "${PIPELINE_PROFILE}" in
         PROFILE_FLAGS=(
             --use-imaging-seeds
             --freeze-imaging-geometry
+            --no-imaging-tight-priors
             --write-preflight-cube
             --mom0-threshold 0.0
             --flux-seed-source auto

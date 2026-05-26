@@ -225,6 +225,30 @@ def test_preflight_outputs_present(smoke_run):
     assert (preflight_dir / "preflight_inclouds_simcube.fits").is_file()
 
 
+def test_bestfit_on_imaging_grid_outputs(smoke_run):
+    out = smoke_run["outdir"]
+    grid_dir = out / "bestfit_on_imaging_grid"
+    assert (grid_dir / "bestfit_imaging_simcube.fits").is_file()
+    assert (grid_dir / "observed_cube.png").is_file()
+    assert (grid_dir / "simulated_cube.png").is_file()
+    assert (grid_dir / "comparison.png").is_file()
+
+
+def test_bestfit_cube_spectral_wcs_matches_vis_grid(smoke_run):
+    """bestfit_cube.fits must not copy imaging CDELT3 when NCHAN differs."""
+    from astropy.io import fits
+
+    bestfit = smoke_run["outdir"] / "bestfit_cube.fits"
+    if not bestfit.is_file():
+        pytest.skip("bestfit_cube.fits not written in smoke run")
+    with fits.open(bestfit) as hdul:
+        hdr = hdul[0].header
+        nchan = int(hdr["NAXIS3"])
+        cdelt3 = abs(float(hdr["CDELT3"]))
+    assert nchan > 17, "smoke uses binned vis grid with more than imaging channels"
+    assert cdelt3 == pytest.approx(5.08, rel=0.05)
+
+
 def test_mcmc_diagnostics_outputs_present(smoke_run):
     out = smoke_run["outdir"]
     diag = out / "diagnostics"
@@ -246,7 +270,7 @@ def test_bestfit_cube_has_observed_wcs_template(smoke_run):
         h_best = hdul[0].header
     with _fits.open(template) as hdul:
         h_obs = hdul[0].header
-    for key in ("CRVAL1", "CRVAL2", "CRVAL3", "CDELT1", "CDELT2", "CDELT3",
+    for key in ("CRVAL1", "CRVAL2", "CDELT1", "CDELT2",
                 "CTYPE1", "CTYPE2", "CTYPE3", "RESTFRQ"):
         a, b = h_best[key], h_obs[key]
         if isinstance(a, str):
@@ -255,6 +279,8 @@ def test_bestfit_cube_has_observed_wcs_template(smoke_run):
             assert float(a) == pytest.approx(float(b), rel=1e-10, abs=1e-15), (
                 f"{key} differs: {a} vs {b}"
             )
+    assert int(h_best["NAXIS3"]) > int(h_obs["NAXIS3"])
+    assert abs(float(h_best["CDELT3"])) == pytest.approx(5.08, rel=0.05)
     assert str(h_best["BUNIT"]).strip() == "Jy/beam"
 
 
@@ -274,6 +300,7 @@ def test_log_contains_required_diagnostic_blocks(smoke_run):
         "IMAGING PREFLIGHT — KILOGAS imaging products",
         "PRIOR REFERENCE (imaging-derived recommendations):",
         "Applied --use-imaging-seeds:",
+        "BEST-FIT ON IMAGING GRID (gNFW MAP @ DR1 30 km/s footprint):",
         "PREFLIGHT CUBE (KinMS inClouds vs observed):",
         "PA PIPELINE ASSERTION — PASS",
         "FLUX AUDIT — MCMC recommendation",

@@ -112,13 +112,52 @@ def _cube_internal_to_fits_array(cube: np.ndarray) -> np.ndarray:
     return np.transpose(cube, (2, 1, 0))
 
 
+def velocity_centers_from_cube_header(header: fits.Header) -> np.ndarray:
+    """Channel-centre velocities (km/s) from a FITS cube spectral WCS."""
+    nchan = int(header["NAXIS3"])
+    crval3 = float(header["CRVAL3"])
+    crpix3 = float(header["CRPIX3"])
+    cdelt3 = float(header["CDELT3"])
+    chan = np.arange(1, nchan + 1, dtype=np.float64)
+    return crval3 + (chan - crpix3) * cdelt3
+
+
+def _apply_spectral_wcs_from_vel(
+    hdr: fits.Header,
+    vel_centers_kms: np.ndarray,
+) -> None:
+    """Set ``CRVAL3`` / ``CDELT3`` / ``CRPIX3`` to match model channel centres (km/s)."""
+    vel = np.asarray(vel_centers_kms, dtype=np.float64).ravel()
+    nchan = int(hdr["NAXIS3"])
+    if vel.size != nchan:
+        raise ValueError(
+            f"vel_centers_kms length {vel.size} != NAXIS3 {nchan}"
+        )
+    cdelt3_obs = float(hdr["CDELT3"]) if "CDELT3" in hdr else 1.0
+    sign = 1.0 if cdelt3_obs >= 0.0 else -1.0
+    if vel.size >= 2:
+        dv = float(np.median(np.diff(vel)))
+    else:
+        dv = abs(cdelt3_obs)
+    hdr["CDELT3"] = sign * abs(dv)
+    hdr["CRPIX3"] = 1.0
+    hdr["CRVAL3"] = float(vel[0])
+
+
 def wcs_header_for_sim_cube(
     obs_header: fits.Header,
     sim_fits_shape: tuple[int, int, int],
     *,
     bunit: str,
+    vel_centers_kms: np.ndarray | None = None,
 ) -> fits.Header:
-    """Copy observed WCS and rescale ``CRPIX``/``NAXIS`` for the simulated shape."""
+    """Copy observed WCS and rescale ``CRPIX``/``NAXIS`` for the simulated shape.
+
+    When ``vel_centers_kms`` is supplied (one value per simulated channel), the
+    spectral axis is set from the model velocity grid instead of copying the
+    template ``CDELT3`` (required when MCMC uses a different ``dv`` or channel
+    count than the imaging cube).
+    """
     hdr = obs_header.copy()
     for key in ("CHECKSUM", "DATASUM"):
         if key in hdr:
@@ -135,9 +174,17 @@ def wcs_header_for_sim_cube(
     hdr["NAXIS3"] = nchan
     hdr["CRPIX1"] = float(hdr["CRPIX1"]) + (nx - nx_o) / 2.0
     hdr["CRPIX2"] = float(hdr["CRPIX2"]) + (ny - ny_o) / 2.0
-    hdr["CRPIX3"] = float(hdr["CRPIX3"]) + (nchan - nchan_o) / 2.0
+    if vel_centers_kms is None:
+        hdr["CRPIX3"] = float(hdr["CRPIX3"]) + (nchan - nchan_o) / 2.0
+    else:
+        _apply_spectral_wcs_from_vel(hdr, vel_centers_kms)
     hdr["BUNIT"] = bunit
     hdr.add_history("KinMS simulated cube; WCS copied from observed template")
+    if vel_centers_kms is not None:
+        hdr.add_history(
+            "Spectral WCS from model velocity axis "
+            f"(NCHAN={nchan}, median dv={abs(float(hdr['CDELT3'])):.4g} km/s)"
+        )
     return hdr
 
 
@@ -147,15 +194,25 @@ def write_simcube_fits(
     obs_cube_path: Path,
     output_path: Path,
     bunit: str = "Jy/beam",
+    vel_centers_kms: np.ndarray | None = None,
 ) -> None:
     """Write a simulated cube with the observed cube's celestial/spectral WCS.
 
     The simulated cube must be supplied in internal ``(nx, ny, nchan)`` order
     (the layout returned by KinMS after the standard uvfit transpose).
+
+    Pass ``vel_centers_kms`` (length = nchan) when the model spectral grid
+    differs from the template cube (e.g. visibility MCMC at ~5 km/s vs DR1
+    30 km/s imaging).
     """
     _, obs_header = load_obs_cube_fits_shape(obs_cube_path)
     fits_data = _cube_internal_to_fits_array(cube)
-    header = wcs_header_for_sim_cube(obs_header, fits_data.shape, bunit=bunit)
+    header = wcs_header_for_sim_cube(
+        obs_header,
+        fits_data.shape,
+        bunit=bunit,
+        vel_centers_kms=vel_centers_kms,
+    )
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fits.PrimaryHDU(data=fits_data.astype(np.float32), header=header).writeto(
@@ -384,4 +441,90 @@ def build_moment_priors(
         ra_deg=float(mom0_header["CRVAL1"]),
         dec_deg=float(mom0_header["CRVAL2"]),
         nu_obs_hz=float(nu_obs_hz),
+    )
+
+
+def make_cube_gnfw(
+    priors: MomentPriors,
+    map_params: dict[str, float],
+    *,
+    cube_path: Path | None = None,
+    radius_arcsec: np.ndarray | None = None,
+) -> np.ndarray:
+    """KinMS gNFW disk cube on a :class:`MomentPriors` grid (``nx, ny, nchan``)."""
+    from kinms import KinMS
+    from uvfit.forward_model import gnfw_circular_velocity
+
+    gamma = float(map_params["gamma"])
+    vmax = float(map_params["vmax"])
+    r_scale = float(map_params["r_scale"])
+    flux = float(map_params["flux"])
+    gas_sigma = float(map_params.get("gas_sigma", priors.gas_sigma_kms))
+
+    if radius_arcsec is None:
+        radius_arcsec = np.arange(0.01, 100.0, 0.1, dtype=np.float64)
+    else:
+        radius_arcsec = np.asarray(radius_arcsec, dtype=np.float64)
+    sbprof = np.exp(-radius_arcsec / r_scale)
+    velprof = gnfw_circular_velocity(radius_arcsec, vmax, r_scale, gamma)
+
+    bmaj, bmin = priors.beam_arcsec
+    n_chan = int(round(priors.vsize_kms / priors.dv_kms))
+    wcs_kwargs = kinms_wcs_kwargs(cube_path, priors, n_chan)
+
+    mc_kwargs: dict[str, Any] = {
+        "inc": priors.inc_deg,
+        "posAng": priors.posang_deg,
+        "gasSigma": gas_sigma,
+        "intFlux": flux,
+        "sbProf": sbprof,
+        "velProf": velprof,
+        "sbRad": radius_arcsec,
+        "velRad": radius_arcsec,
+        "toplot": False,
+        "fileName": "",
+        "ra": priors.ra_deg,
+        "dec": priors.dec_deg,
+    }
+    if "vSys" not in wcs_kwargs:
+        mc_kwargs["vSys"] = priors.vsys_kms
+    mc_kwargs.update(wcs_kwargs)
+
+    return KinMS(
+        priors.xsize_arcsec,
+        priors.ysize_arcsec,
+        priors.vsize_kms,
+        priors.cellsize_arcsec,
+        priors.dv_kms,
+        [bmaj, bmin, 0],
+        huge_beam=False,
+        nSamps=1,
+    ).model_cube(**mc_kwargs)
+
+
+def moment_priors_for_map_on_imaging_grid(
+    template: MomentPriors,
+    map_params: dict[str, float],
+) -> MomentPriors:
+    """Copy imaging-grid priors but replace flux/kinematics with MCMC MAP values."""
+    return MomentPriors(
+        posang_deg=template.posang_deg,
+        inc_deg=template.inc_deg,
+        scalerad_arcsec=float(map_params.get("r_scale", template.scalerad_arcsec)),
+        intflux_jy_kms=float(map_params["flux"]),
+        gas_sigma_kms=float(map_params.get("gas_sigma", template.gas_sigma_kms)),
+        gas_sigma_obs_kms=float(
+            map_params.get("gas_sigma", template.gas_sigma_obs_kms)
+        ),
+        vmax_kms=float(map_params["vmax"]),
+        vsys_kms=template.vsys_kms,
+        xsize_arcsec=template.xsize_arcsec,
+        ysize_arcsec=template.ysize_arcsec,
+        cellsize_arcsec=template.cellsize_arcsec,
+        vsize_kms=template.vsize_kms,
+        dv_kms=template.dv_kms,
+        beam_arcsec=template.beam_arcsec,
+        ra_deg=template.ra_deg,
+        dec_deg=template.dec_deg,
+        nu_obs_hz=template.nu_obs_hz,
     )

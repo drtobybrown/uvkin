@@ -1085,6 +1085,7 @@ _imaging_seeds_active = (
 _tighten_priors = (
     _imaging_seeds_active
     and (args.imaging_tight_priors is not False)
+    and not _freeze_imaging_geometry
 )
 if _tighten_priors:
     _s_tight = _imaging_preflight_result.seeds
@@ -1119,6 +1120,11 @@ else:
     _flux_bounds_active = _flux_bounds_from_audit
     _bounds_label = "YAML box priors (no imaging tightening)"
 
+_r_scale_floor_arcsec = None
+if _imaging_preflight_result is not None and _imaging_preflight_result.beam_bmaj_arcsec:
+    _bmaj_floor = float(_imaging_preflight_result.beam_bmaj_arcsec)
+    _r_scale_floor_arcsec = max(0.5 * float(R_SCALE), 0.8 * _bmaj_floor)
+
 empirical_bounds = get_empirical_bounds(
     vsys_int=VSYS,
     flux_int=mcmc_flux_jy_kms,
@@ -1129,8 +1135,14 @@ empirical_bounds = get_empirical_bounds(
     mcmc_bounds=_mcmc_bounds_active,
     flux_bounds=_flux_bounds_active,
     gas_sigma_floor=_gas_sigma_floor,
+    r_scale_floor_arcsec=_r_scale_floor_arcsec,
     phase_centroid_seed_arcsec=_centroid_seed,
 )
+if _r_scale_floor_arcsec is not None:
+    log.info(
+        "r_scale prior floor: %.3f arcsec (max of 0.5×seed and 0.8×BMAJ)",
+        _r_scale_floor_arcsec,
+    )
 
 if _freeze_imaging_geometry and not args.use_imaging_seeds:
     raise SystemExit(
@@ -1697,45 +1709,98 @@ if (
     and _imaging_paths.cube.is_file()
 ):
     _best_cube_xync = np.transpose(np.asarray(best_cube), (2, 1, 0))
+    _vel_centers_bestfit = np.asarray(vel_trim, dtype=np.float64)
     write_simcube_fits(
         _best_cube_xync,
         obs_cube_path=_imaging_paths.cube,
         output_path=cube_fits_path,
         bunit="Jy/beam",
+        vel_centers_kms=_vel_centers_bestfit,
     )
     log.info(
-        "Best-fit cube saved with observed-WCS template (BUNIT=Jy/beam) to %s",
+        "Best-fit cube saved with observed-WCS template (BUNIT=Jy/beam, "
+        "NCHAN=%d, median dv=%.3f km/s) to %s",
+        _best_cube_xync.shape[2],
+        float(np.median(np.abs(np.diff(_vel_centers_bestfit))))
+        if _vel_centers_bestfit.size > 1
+        else float(_vel_centers_bestfit[0]),
         cube_fits_path,
     )
 
-    if moment_priors_obj is not None:
-        from kinms_grid import load_observed_cube_for_plot as _load_obs
+    if moment_priors_obj is not None and _do_preflight_cube:
+        from kinms_grid import (
+            load_observed_cube_for_plot as _load_obs,
+            make_cube_gnfw,
+            moment_priors_for_map_on_imaging_grid,
+            velocity_centers_from_cube_header,
+        )
 
-        _obs_xync, _obs_hdr_best = _load_obs(_imaging_paths.cube)
-        if _obs_xync.shape[:2] != _best_cube_xync.shape[:2]:
-            log.info(
-                "Skipping best-fit comparison PNGs: model grid %s differs "
-                "from observed cube %s (uvkin shared.nx/ny vs cube NAXIS1/2). "
-                "Match shared.cellsize_arcsec × nx/ny to the observed cube "
-                "footprint to enable side-by-side plotting.",
-                _best_cube_xync.shape[:2],
-                _obs_xync.shape[:2],
-            )
-        else:
-            _bestfit_plot_dir = outdir / "bestfit_comparison"
-            _bestfit_pngs = save_cube_comparison_plots(
-                obs_cube=_obs_xync,
-                obs_header=_obs_hdr_best,
-                sim_cube=_best_cube_xync,
-                priors=moment_priors_obj,
-                plot_dir=_bestfit_plot_dir,
-            )
-            for _p in _bestfit_pngs:
-                log.info("Best-fit comparison PNG: %s", _p)
+        _map_priors = moment_priors_for_map_on_imaging_grid(
+            moment_priors_obj, result_mcmc.params
+        )
+        _map_cube_imaging = make_cube_gnfw(
+            _map_priors,
+            result_mcmc.params,
+            cube_path=_imaging_paths.cube,
+        )
+        _imaging_grid_dir = outdir / "bestfit_on_imaging_grid"
+        _imaging_grid_dir.mkdir(parents=True, exist_ok=True)
+        _map_fits = _imaging_grid_dir / "bestfit_imaging_simcube.fits"
+        _vel_imaging = velocity_centers_from_cube_header(
+            fits.getheader(_imaging_paths.cube)
+        )
+        write_simcube_fits(
+            _map_cube_imaging,
+            obs_cube_path=_imaging_paths.cube,
+            output_path=_map_fits,
+            bunit="Jy/beam",
+            vel_centers_kms=_vel_imaging,
+        )
+        _obs_xync, _obs_hdr_map = _load_obs(_imaging_paths.cube)
+        _map_pngs = save_cube_comparison_plots(
+            obs_cube=_obs_xync,
+            obs_header=_obs_hdr_map,
+            sim_cube=_map_cube_imaging,
+            priors=_map_priors,
+            plot_dir=_imaging_grid_dir,
+        )
+        _flux_obs_map = integrated_flux_jy_kms(
+            _obs_xync, _obs_hdr_map, bunit=str(_obs_hdr_map.get("BUNIT", "K"))
+        )
+        _flux_sim_map = integrated_flux_jy_kms(
+            _map_cube_imaging, _obs_hdr_map, bunit="Jy/beam"
+        )
+        _mom0_corr_map = mom0_cross_correlation(
+            _obs_xync, _obs_hdr_map, _map_cube_imaging
+        )
+        log.info("=" * 60)
+        log.info("BEST-FIT ON IMAGING GRID (gNFW MAP @ DR1 30 km/s footprint):")
+        log.info("  cube shape (nx, ny, nchan): %s", _map_cube_imaging.shape)
+        log.info("  MAP flux (Jy km/s)       : %.4f", float(result_mcmc.params["flux"]))
+        log.info("  flux observed (Jy km/s)  : %.4f", _flux_obs_map)
+        log.info("  flux simulated (Jy km/s) : %.4f (ratio sim/obs = %.3f)",
+                 _flux_sim_map, _flux_sim_map / _flux_obs_map if _flux_obs_map else 0.0)
+        if _imaging_preflight_result is not None:
+            _mom0_ref = _imaging_preflight_result.flux_int_mom0_jy_kms
+            if _mom0_ref:
+                log.info(
+                    "  MAP / imaging mom0 flux  : %.3f (mom0 preflight ~%.1f Jy km/s)",
+                    float(result_mcmc.params["flux"]) / float(_mom0_ref),
+                    float(_mom0_ref),
+                )
+        log.info("  mom0 cross-corr          : %.4f", _mom0_corr_map)
+        log.info("  FITS: %s", _map_fits)
+        for _p in _map_pngs:
+            log.info("  PNG: %s", _p)
+        log.info("=" * 60)
+    elif _do_preflight_cube:
+        log.info(
+            "Skipping best-fit on imaging grid: moment_priors_obj unavailable."
+        )
     else:
         log.info(
-            "Best-fit comparison PNGs skipped: moment_priors_obj unavailable "
-            "(no preflight cube ran; pass --write-preflight-cube to enable)."
+            "Skipping best-fit on imaging grid: pass --write-preflight-cube "
+            "with imaging products to enable DR1-grid MAP comparison."
         )
 else:
     write_bestfit_cube_fits(
