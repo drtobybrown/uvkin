@@ -1,27 +1,44 @@
 # KGAS066 science experiment matrix
 
-Targeted experiments to separate **flux calibration**, **gamma/r_scale prior walls**, and **5 vs 30 km/s** identifiability for KILOGAS066 (`diagnose_*_frozen` profiles).
+Targeted experiments to separate **aggregation-aware likelihood**, **mom0 vs exponential SB**, **flux calibration**, **γ/r_scale walls**, and **5 vs 30 km/s** for KILOGAS066 (`diagnose_*_frozen` profiles).
 
-## Experiment design
+## Design axes
 
-Ten runs (baseline plus aggregation / SB variants):
+| Axis | Values | Purpose |
+|------|--------|---------|
+| **likelihood** | `agg_aware` / `legacy_no_agg` | Correct native→aggregate χ² vs old binned-degrid failure mode |
+| **sb_profile** | `obs_mom0` / `exp_disk` | Semi-parametric morphology vs exp(-R/r_scale) |
+| **spectral** | `5kms` / `30kms` | Visibility channel width |
+| **flux** | `auto` / `mom0` | Visibility audit vs imaging mom0 anchor |
+| **shape** | free / `fix_gamma` / `fix_r_scale` | Prior-wall probes on the recommended baseline |
 
-| ID | Δv (vis) | Flux anchor | Shape / likelihood |
-|----|----------|-------------|-------------------|
-| `5kms_A_vis` | ~5 km/s | `auto` (visibility audit) | free γ, r_scale; agg-aware (default) |
-| `5kms_A_mom0` | ~5 km/s | `mom0` | free |
-| `5kms_B_fixgamma_vis` | ~5 km/s | `auto` | `--fix-gamma 1.0` |
-| `5kms_C_fixrscale_vis` | ~5 km/s | `auto` | `--fix-r-scale` (imaging seed) |
-| `5kms_aggAware_vis` | ~5 km/s | `auto` | explicit `--aggregation-aware-likelihood` |
-| `5kms_obsSb_aggAware` | ~5 km/s | `auto` | mom0 SB + agg-aware |
-| `30kms_A_vis` | ~30 km/s | `auto` | free |
-| `30kms_A_mom0` | ~30 km/s | `mom0` | free |
-| `30kms_B_fixgamma_vis` | ~30 km/s | `auto` | γ=1 fixed |
-| `30kms_C_fixrscale_vis` | ~30 km/s | `auto` | r_scale fixed |
+**Recommended production baseline:** `5kms_baseline_obsSb` — aggregation-aware + mom0 SB + vis-aligned flux.
 
-All runs: frozen imaging geometry (PA, inc, vsys, dx, dy), inClouds preflight on DR1 30 km/s cubes. Imaging-grid export uses imaging vmax/r_scale/gas_sigma with MAP γ only (`--imaging-grid-kinematics imaging_seeds`, default). Legacy full-MAP cubes: `--imaging-grid-kinematics mcmc_map`.
+## Experiment table (12 runs)
 
-**Aggregation-aware likelihood (default):** KinMS cubes use native channel width/count; model visibilities are degridded then passed through the same `aggregate_visibilities` pipeline as the data before χ². Disable with `--no-aggregation-aware-likelihood`.
+### Tier `core` (6 pilots — submit with `--core`)
+
+| ID | Δv | Likelihood | SB | Flux |
+|----|-----|------------|-----|------|
+| `5kms_baseline_obsSb` | ~5 | agg-aware | mom0 | auto |
+| `5kms_expSb_aggAware` | ~5 | agg-aware | exp | auto |
+| `5kms_legacy_noAgg_expSb` | ~5 | **legacy** | exp | auto |
+| `5kms_legacy_noAgg_obsSb` | ~5 | **legacy** | mom0 | auto |
+| `30kms_baseline_obsSb` | ~30 | agg-aware | mom0 | auto |
+| `30kms_legacy_noAgg_expSb` | ~30 | **legacy** | exp | auto |
+
+### Tier `extended` (6 more)
+
+| ID | Notes |
+|----|--------|
+| `5kms_baseline_mom0flux` | Baseline + imaging mom0 flux seed |
+| `5kms_baseline_fixgamma` | Baseline + γ=1 fixed |
+| `5kms_baseline_fixrscale` | Baseline + r_scale at imaging seed |
+| `30kms_expSb_aggAware` | 30 km/s, agg-aware, exp SB |
+| `30kms_baseline_mom0flux` | 30 km/s baseline + mom0 flux |
+| `30kms_baseline_fixgamma` | 30 km/s baseline + γ=1 fixed |
+
+All runs: frozen imaging geometry, inClouds preflight (DR1 30 km/s), flux audit, `observed_sb_profile.png` when `obs_mom0`.
 
 ## Workflow
 
@@ -32,13 +49,20 @@ cd /path/to/uvkin
 python3 scripts/generate_kgas066_science_matrix.py \
   --matrix-root science_matrix/KGAS066 \
   --results-base /arc/projects/KILOGAS/analysis/toby_sandbox/results
+
+# Core only (6 rows):
+python3 scripts/generate_kgas066_science_matrix.py --tier core ...
 ```
 
-### 2. Pilot chains (rank candidates)
+### 2. Pilot chains
 
 ```bash
-bash scripts/submit_kgas066_science_matrix.sh --pilot --dry   # preview
-bash scripts/submit_kgas066_science_matrix.sh --pilot          # all 8 jobs, MAX_STEPS=15000
+# Core comparison (6 jobs) — recommended first tranche
+bash scripts/submit_kgas066_science_matrix.sh --pilot --core --dry
+bash scripts/submit_kgas066_science_matrix.sh --pilot --core
+
+# Full matrix (12 jobs)
+bash scripts/submit_kgas066_science_matrix.sh --pilot
 ```
 
 ### 3. Scoreboard
@@ -46,47 +70,42 @@ bash scripts/submit_kgas066_science_matrix.sh --pilot          # all 8 jobs, MAX
 ```bash
 python3 scripts/aggregate_science_matrix.py \
   --matrix-root science_matrix/KGAS066 \
-  --also-scan /path/to/results/KILOGAS066
+  --also-scan /arc/projects/KILOGAS/analysis/toby_sandbox/results/KILOGAS066
 ```
 
-Writes `scoreboard.csv`, `scoreboard.md`, `scoreboard_summary.json`.
+Ranking favors low `rchi2_MAP`, high imaging-grid mom0 correlation, low γ/r_scale walls, converged chains. Compare **`5kms_baseline_obsSb`** vs **`5kms_legacy_noAgg_*`** to quantify aggregation fix.
 
-Ranking score (higher = better for extension): favors low `rchi2_MAP`, high imaging-grid mom0 correlation, low `gamma`/`r_scale` wall fractions, converged chains; penalizes weak line excess (&lt;1.5).
-
-### 4. Long chains (top 2 only)
+### 4. Long chains
 
 ```bash
-bash scripts/submit_kgas066_science_matrix.sh --long 5kms_B_fixgamma_vis 30kms_A_vis
-# MAX_STEPS=80000; target N_postburn >= 100 * tau_max(r_scale)
+bash scripts/submit_kgas066_science_matrix.sh --long 5kms_baseline_obsSb 30kms_baseline_obsSb
 ```
 
-## Decision gates (from science plan)
+## Decision gates
 
-**Flux**
+**Aggregation**
 
-- If `5kms_A_mom0` improves imaging-grid morphology and `rchi2` only slightly vs `5kms_A_vis` → imaging flux anchor is viable for cube comparisons; document mom0/vis ratio.
-- If vis-aligned wins on likelihood but morphology stays poor → keep vis flux for MCMC; interpret cube mismatch as expected scale offset (~0.29 MAP/mom0).
+- If `5kms_legacy_noAgg_*` shows low MAP flux / poor imaging-grid corr vs `5kms_baseline_obsSb` → aggregation-aware likelihood is required for vis science.
 
-**Shape priors**
+**SB profile**
 
-- Prefer setup with `gamma_wall_hi` and `r_scale_wall_lo` both &lt; 0.2 and imaging-grid mom0 corr &gt; 0.5.
-- If walls persist after long chain → identifiability limit, not insufficient steps.
+- If `5kms_expSb_aggAware` ≪ `5kms_baseline_obsSb` on imaging-grid mom0 corr → keep mom0 SB for cube QA.
 
-**Spectral resolution**
+**Flux / shape / spectral**
 
-- Compare `5kms_A_vis` vs `30kms_A_vis` at matched priors.
-- Pre-fit line excess &lt; 1.5 on both → weak line SNR; favor **30 km/s** for production if 5 km/s does not tighten posteriors.
+- Unchanged from prior matrix: see [kgas066_science_recommendation.md](kgas066_science_recommendation.md).
 
-## CLI additions
+## CLI reference
 
 ```bash
---fix-gamma [VALUE]      # freeze γ (default VALUE=1.0)
---fix-r-scale [VALUE]    # freeze r_scale arcsec (default: imaging seed)
+--aggregation-aware-likelihood    # explicit (default in run_kgas_full)
+--no-aggregation-aware-likelihood # legacy failure-mode arm
+--observed-sb-from-mom0           # mom0 SB + observed_sb_profile.png
+--fix-gamma [VALUE]
+--fix-r-scale [VALUE]
 ```
-
-YAML per galaxy: `fix_gamma: 1.0`, `fix_r_scale: 2.615`.
 
 ## See also
 
-- [kgas066_science_recommendation.md](kgas066_science_recommendation.md) — production vs validation profile choice
-- [flux_audit_and_mcmc.md](flux_audit_and_mcmc.md) — flux audit semantics
+- [kgas066_science_recommendation.md](kgas066_science_recommendation.md)
+- [flux_audit_and_mcmc.md](flux_audit_and_mcmc.md)

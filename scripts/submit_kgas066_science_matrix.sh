@@ -2,7 +2,10 @@
 # Submit KGAS066 science-matrix experiments (pilot or long chains).
 #
 # Usage:
-#   bash scripts/submit_kgas066_science_matrix.sh [--dry] [--pilot|--long] [EXPERIMENT_ID ...]
+#   bash scripts/submit_kgas066_science_matrix.sh [--dry] [--pilot|--long] [--core] [EXPERIMENT_ID ...]
+#
+#   --core   submit only tier=core jobs (5 km/s likelihood×SB + 30 km/s baseline pair;
+#            6 pilots). Omit for the full matrix (12 experiments).
 #
 # Prerequisites: manifest from scripts/generate_kgas066_science_matrix.py
 #
@@ -36,6 +39,7 @@ CHECK_INTERVAL=500
 
 DRY_RUN=false
 CHAIN_MODE="pilot"
+TIER_FILTER=""
 FILTER_IDS=()
 
 while [[ $# -gt 0 ]]; do
@@ -43,6 +47,7 @@ while [[ $# -gt 0 ]]; do
         --dry) DRY_RUN=true; shift ;;
         --pilot) CHAIN_MODE="pilot"; shift ;;
         --long) CHAIN_MODE="long"; shift ;;
+        --core) TIER_FILTER="core"; shift ;;
         --help|-h)
             sed -n '1,20p' "$0"
             exit 0
@@ -60,12 +65,12 @@ else
     MAX_STEPS="${PILOT_MAX_STEPS}"
 fi
 
-if [[ ! -f "${MANIFEST}" ]]; then
-    echo "Generating manifest at ${MATRIX_ROOT}..." >&2
-    python3 "${SCRIPT_DIR}/generate_kgas066_science_matrix.py" \
-        --matrix-root "${MATRIX_ROOT}" \
-        --results-base "${RESULTS_BASE}"
-fi
+_gen_tier="${TIER_FILTER:-all}"
+echo "Regenerating manifest at ${MATRIX_ROOT} (tier=${_gen_tier})..." >&2
+python3 "${SCRIPT_DIR}/generate_kgas066_science_matrix.py" \
+    --matrix-root "${MATRIX_ROOT}" \
+    --results-base "${RESULTS_BASE}" \
+    --tier "${_gen_tier}"
 
 DATA="${VIS_DIR}/${GALAXY}.npz"
 
@@ -100,11 +105,14 @@ JOBS=()
 while IFS= read -r _line; do
     [[ -n "${_line}" ]] && JOBS+=("${_line}")
 done < <(
-    if [[ ${#FILTER_IDS[@]} -gt 0 ]]; then
-        python3 "${SCRIPT_DIR}/list_science_matrix_jobs.py" "${MANIFEST}" "${FILTER_IDS[@]}"
-    else
-        python3 "${SCRIPT_DIR}/list_science_matrix_jobs.py" "${MANIFEST}"
+    _list_args=("${MANIFEST}")
+    if [[ -n "${TIER_FILTER}" ]]; then
+        _list_args+=(--tier "${TIER_FILTER}")
     fi
+    if [[ ${#FILTER_IDS[@]} -gt 0 ]]; then
+        _list_args+=("${FILTER_IDS[@]}")
+    fi
+    python3 "${SCRIPT_DIR}/list_science_matrix_jobs.py" "${_list_args[@]}"
 )
 
 if [[ ${#JOBS[@]} -eq 0 ]]; then

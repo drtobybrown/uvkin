@@ -9,10 +9,20 @@ from science_matrix import default_experiments, write_manifest
 
 def test_default_experiments_count():
     exps = default_experiments()
-    assert len(exps) == 8
+    assert len(exps) == 12
     ids = {e.experiment_id for e in exps}
-    assert "5kms_A_vis" in ids
-    assert "30kms_C_fixrscale_vis" in ids
+    assert "5kms_baseline_obsSb" in ids
+    assert "5kms_legacy_noAgg_expSb" in ids
+    assert "30kms_baseline_obsSb" in ids
+
+
+def test_experiments_for_tier_core():
+    from science_matrix import experiments_for_tier
+
+    core = experiments_for_tier("core")
+    assert len(core) == 6
+    assert all(e.tier == "core" for e in core)
+    assert {e.likelihood_mode for e in core} <= {"agg_aware", "legacy_no_agg"}
 
 
 def test_write_manifest(tmp_path):
@@ -23,8 +33,10 @@ def test_write_manifest(tmp_path):
     )
     assert manifest.is_file()
     text = manifest.read_text(encoding="utf-8")
-    assert "5kms_A_vis" in text
-    assert "science_matrix/5kms_A_vis" in text
+    assert "5kms_baseline_obsSb" in text
+    assert "science_matrix/5kms_baseline_obsSb" in text
+    assert "likelihood_mode" in text
+    assert "agg_aware" in text
 
 
 def test_parse_run_log_baseline():

@@ -38,7 +38,7 @@ bash scripts/submit_kgas.sh KILOGAS066 diagnose_30kms_frozen
 
 Requires `diagnose_30kms_frozen` in `submit_kgas.sh` (added with this matrix).
 
-**First MCMC extension after matrix pilot:** `30kms_B_fixgamma_vis` if it reduces γ wall pressure without large `rchi2` penalty; else `30kms_C_fixrscale_vis` if r_scale wall is the dominant pathology.
+**First MCMC extension after matrix pilot:** compare `5kms_baseline_obsSb` vs `5kms_legacy_noAgg_expSb`; then `5kms_baseline_fixgamma` or `5kms_baseline_fixrscale` if walls persist on the new baseline.
 
 ### Validation (imaging morphology)
 
@@ -57,7 +57,7 @@ After `aggregate_science_matrix.py` on pilot + long runs:
 
 ## Next actions
 
-1. `bash scripts/submit_kgas066_science_matrix.sh --pilot`
+1. `bash scripts/submit_kgas066_science_matrix.sh --pilot --core`
 2. `python3 scripts/aggregate_science_matrix.py --also-scan $RESULTS/KILOGAS066`
 3. Long-chain top 2 IDs from scoreboard
 4. Update this file with final production/validation IDs and numeric table

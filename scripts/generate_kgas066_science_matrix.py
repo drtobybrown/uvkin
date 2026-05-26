@@ -29,11 +29,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Base results directory (galaxy subdirs appended)",
     )
     p.add_argument("--galaxy", default="KILOGAS066")
+    p.add_argument(
+        "--tier",
+        choices=("all", "core", "extended"),
+        default="all",
+        help="Manifest rows: core (likelihood×SB), extended (flux/shape), or all",
+    )
     args = p.parse_args(argv)
     out = write_manifest(
         args.matrix_root,
         results_base=args.results_base,
         galaxy=args.galaxy,
+        tier=args.tier,
     )
     print(f"Wrote {out}")
     return 0

@@ -1518,7 +1518,7 @@ log.info("=" * 60)
 radius = np.arange(0.01, 100, 0.1)
 _mom0_sb_profile = None
 if _obs_sb_from_mom0 and _imaging_paths is not None and _imaging_paths.mom0.is_file():
-    from mom0_sb_profile import azimuthal_sb_profile_from_mom0
+    from mom0_sb_profile import azimuthal_sb_profile_from_mom0, save_sb_profile_plot
 
     with fits.open(_imaging_paths.mom0) as _m0hd:
         _m0_data = np.squeeze(np.asarray(_m0hd[0].data, dtype=np.float64))
@@ -1542,10 +1542,20 @@ if _obs_sb_from_mom0 and _imaging_paths is not None and _imaging_paths.mom0.is_f
         r50_arcsec=_mom0_sb_profile.r50_arcsec,
         pa_deg=_mom0_sb_profile.pa_deg,
     )
+    _sb_plot = save_sb_profile_plot(
+        _mom0_sb_profile,
+        outdir / "observed_sb_profile.png",
+        kinms_radius_arcsec=radius,
+        kinms_sb_norm=sbprof,
+        r_scale_exp_arcsec=float(R_SCALE),
+        title=f"{args.kgas_id} mom0 SB (PA={_pa_sb:.1f}°)",
+    )
     log.info(
-        "Observed SB from mom0: r50=%.2f arcsec (%d pixels), saved observed_sb_profile.npz",
+        "Observed SB from mom0: r50=%.2f arcsec (%d pixels); "
+        "saved observed_sb_profile.npz and %s",
         _mom0_sb_profile.r50_arcsec,
         _mom0_sb_profile.n_pix,
+        _sb_plot,
     )
 else:
     sbprof = np.exp(-radius / R_SCALE)

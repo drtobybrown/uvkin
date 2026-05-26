@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from astropy.wcs import WCS
@@ -102,3 +103,78 @@ def azimuthal_sb_profile_from_mom0(
         pa_deg=float(pa_deg),
         n_pix=int(np.sum(finite)),
     )
+
+
+def save_sb_profile_plot(
+    profile: Mom0SbProfile,
+    output_path: Path | str,
+    *,
+    kinms_radius_arcsec: np.ndarray | None = None,
+    kinms_sb_norm: np.ndarray | None = None,
+    r_scale_exp_arcsec: float | None = None,
+    title: str | None = None,
+) -> Path:
+    """
+    Plot the mom0-derived azimuthal SB profile (and optional KinMS grid / exp disk).
+
+    ``sb_norm`` is dimensionless with ``trapz(sb, R) = 1``; MCMC ``flux`` sets Jy·km/s.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    r = np.asarray(profile.radius_arcsec, dtype=np.float64)
+    sb = np.asarray(profile.sb_norm, dtype=np.float64)
+
+    fig, ax = plt.subplots(figsize=(7, 4), facecolor="white")
+    ax.plot(r, sb, "o-", color="C0", lw=1.5, ms=3, label="mom0 azimuthal avg")
+
+    if kinms_radius_arcsec is not None and kinms_sb_norm is not None:
+        rk = np.asarray(kinms_radius_arcsec, dtype=np.float64)
+        sk = np.asarray(kinms_sb_norm, dtype=np.float64)
+        ax.plot(rk, sk, "-", color="C1", lw=1.0, alpha=0.85, label="KinMS sbProf grid")
+
+    if r_scale_exp_arcsec is not None and float(r_scale_exp_arcsec) > 0.0:
+        rs = float(r_scale_exp_arcsec)
+        sb_exp = np.exp(-r / rs)
+        total = _trapz_compat(sb_exp, r)
+        if total > 0.0:
+            sb_exp = sb_exp / total
+        ax.plot(
+            r,
+            sb_exp,
+            "--",
+            color="C2",
+            lw=1.2,
+            alpha=0.8,
+            label=f"exp disk (r_scale={rs:.2f} arcsec)",
+        )
+
+    ax.axvline(
+        profile.r50_arcsec,
+        color="gray",
+        ls=":",
+        lw=1.0,
+        label=rf"$R_{{50}}$ = {profile.r50_arcsec:.2f}''",
+    )
+    ax.set_xlabel("Radius in disk plane (arcsec)")
+    ax.set_ylabel("SB (normalized, ∫2πR·SB dR = 1)")
+    ax.set_xlim(left=0.0)
+    ax.set_ylim(bottom=0.0)
+    ax.legend(loc="upper right", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    if title:
+        ax.set_title(title)
+    else:
+        ax.set_title(
+            f"Surface-brightness profile (PA={profile.pa_deg:.1f}°, "
+            f"{profile.n_pix} mom0 pixels)"
+        )
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    return output_path

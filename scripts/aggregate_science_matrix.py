@@ -78,12 +78,13 @@ def write_scoreboard(
         f"- Complete: {summary['n_complete']}",
         f"- Top ranked (pilot): **{summary.get('top_experiment_id', 'n/a')}**",
         "",
-        "| Rank | ID | spectral | flux | shape | status | rchi2_MAP | mom0_corr (grid) | gamma_wall_hi | r_scale_wall_lo | score |",
-        "|------|-----|----------|------|-------|--------|-----------|------------------|---------------|-----------------|-------|",
+        "| Rank | ID | spectral | likelihood | SB | flux | shape | status | rchi2_MAP | mom0_corr (grid) | gamma_wall_hi | r_scale_wall_lo | score |",
+        "|------|-----|----------|------------|-----|------|-------|--------|-----------|------------------|---------------|-----------------|-------|",
     ]
     for i, r in enumerate(rows, start=1):
         lines.append(
             f"| {i} | {r.get('experiment_id','')} | {r.get('spectral_label','')} | "
+            f"{r.get('likelihood_mode','—')} | {r.get('sb_mode','—')} | "
             f"{r.get('flux_seed_source','')} | {r.get('shape_mode','')} | {r.get('status','')} | "
             f"{_fmt(r.get('rchi2_map'))} | {_fmt(r.get('imaging_grid_mom0_corr'))} | "
             f"{_fmt(r.get('gamma_wall_hi'))} | {_fmt(r.get('r_scale_wall_lo'))} | "
