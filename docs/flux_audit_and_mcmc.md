@@ -341,7 +341,7 @@ ARC: `bash scripts/submit_kgas.sh KGAS066 diagnose_5kms_frozen`
 | Visibility MAP | `bestfit_cube.fits` | 256×256, 125×~5 km/s | gNFW parametric | visibility MAP (~28 Jy·km/s) |
 | MAP on imaging grid | `bestfit_on_imaging_grid/bestfit_imaging_simcube.fits` | DR1 135×135, 17×30 km/s | gNFW MAP kinematics | visibility MAP flux, imaging Δv |
 
-`bestfit_cube.fits` uses the **observed cube WCS for sky axes** but sets **`CDELT3` from the binned visibility `vel_trim`** (not the 30 km/s imaging spacing). Compare morphology to DR1 using **`bestfit_on_imaging_grid/`** PNGs (same footprint as preflight).
+`bestfit_cube.fits` uses the **observed cube WCS for sky axes**, sets **`CDELT3` from the binned visibility `vel_trim`**, and stores simulated brightness in **`K`** (same `BUNIT` as DR1). When imaging products are present, the MCMC KinMS grid uses **`nx`/`ny`/`cellsize` from the imaging cube header** (not `shared.nx/ny`). Compare morphology to DR1 using **`bestfit_on_imaging_grid/`** or **`preflight_inclouds/`** PNGs (K vs K).
 
 Frozen geometry runs disable `--imaging-tight-priors` automatically; `r_scale` lower bound is at least `max(0.5×seed, 0.8×BMAJ)`.
 

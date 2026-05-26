@@ -12,6 +12,7 @@ from kinms_grid import (
     build_inclouds_from_moments,
     central_observed_frequency_hz,
     gaussian_beam_area_sr,
+    imaging_spatial_grid_from_header,
     kinms_alignment_from_obs_header,
     wcs_header_for_sim_cube,
     write_simcube_fits,
@@ -237,6 +238,14 @@ def test_write_simcube_fits_sets_cdelt3_for_binned_grid(tmp_path):
         hdr = hdul[0].header
         assert hdr["NAXIS3"] == nchan
         assert hdr["CDELT3"] == pytest.approx(dv, rel=1e-4)
+
+
+def test_imaging_spatial_grid_from_header():
+    h = _make_obs_cube_header(nx=135, ny=135, cdelt1_arcsec=-0.4)
+    nx, ny, cell = imaging_spatial_grid_from_header(h)
+    assert nx == 135
+    assert ny == 135
+    assert cell == pytest.approx(0.4, rel=1e-6)
 
 
 def test_moment_priors_constructible():

@@ -41,6 +41,19 @@ def _pixel_solid_angle_sr(header: fits.Header, shape: tuple[int, int]) -> np.nda
     return np.full(shape, dx * dy * cos_dec, dtype=np.float64)
 
 
+def cube_jy_beam_to_k(
+    cube: np.ndarray,
+    cube_header: fits.Header,
+) -> np.ndarray:
+    """Convert a ``Jy/beam`` cube (internal ``nx, ny, nchan``) to brightness temperature ``K``."""
+    cal = build_flux_calibration(
+        cube_header, (int(cube.shape[1]), int(cube.shape[0]))
+    )
+    if cal.jy_per_beam_per_k <= 0.0:
+        raise ValueError("jy_per_beam_per_k must be positive for K conversion")
+    return np.asarray(cube, dtype=np.float64) / cal.jy_per_beam_per_k
+
+
 def build_flux_calibration(
     cube_header: fits.Header,
     spatial_shape: tuple[int, int],
@@ -73,6 +86,15 @@ def _channel_width_kms(vel_kms: np.ndarray) -> float:
     if vel_kms.size < 2:
         return 1.0
     return float(np.abs(np.median(np.diff(vel_kms))))
+
+
+def collapsed_spectrum_kkms(
+    cube: np.ndarray,
+    vel_kms: np.ndarray,
+) -> np.ndarray:
+    """Spatially integrated spectrum in K km s⁻¹ (cube in K per beam)."""
+    dv = _channel_width_kms(vel_kms)
+    return np.nansum(cube, axis=(0, 1)) * dv
 
 
 def collapsed_spectrum_jy_kms(
@@ -225,6 +247,7 @@ def save_cube_comparison_plots(
     sim_cube: np.ndarray,
     priors: MomentPriors,
     plot_dir: Path,
+    sim_bunit: str = "Jy/beam",
 ) -> list[Path]:
     """Write observed, simulated, and comparison figures to ``plot_dir``.
 
@@ -242,14 +265,29 @@ def save_cube_comparison_plots(
     sim_vel = velocity_axis_kms(obs_header, sim_cube.shape[2])
     cal = build_flux_calibration(obs_header, (obs_cube.shape[1], obs_cube.shape[0]))
     obs_bunit = _cube_bunit(obs_header)
-    sim_bunit = "Jy/beam"
+    sim_bunit = str(sim_bunit).strip()
 
     obs_m0 = moment0_kkms_per_beam(obs_cube, obs_vel, cal, bunit=obs_bunit)
     sim_m0 = moment0_kkms_per_beam(sim_cube, sim_vel, cal, bunit=sim_bunit)
     _, obs_m1 = moment_maps(obs_cube, obs_vel)
     _, sim_m1 = moment_maps(sim_cube, sim_vel)
-    obs_spec = collapsed_spectrum_jy_kms(obs_cube, obs_vel, cal, bunit=obs_bunit)
-    sim_spec = collapsed_spectrum_jy_kms(sim_cube, sim_vel, cal, bunit=sim_bunit)
+    if _is_jy_beam(obs_bunit):
+        obs_spec = collapsed_spectrum_jy_kms(
+            obs_cube, obs_vel, cal, bunit=obs_bunit
+        )
+    else:
+        obs_spec = collapsed_spectrum_kkms(obs_cube, obs_vel)
+    if _is_jy_beam(sim_bunit):
+        sim_spec = collapsed_spectrum_jy_kms(
+            sim_cube, sim_vel, cal, bunit=sim_bunit
+        )
+    else:
+        sim_spec = collapsed_spectrum_kkms(sim_cube, sim_vel)
+    spec_ylabel = (
+        "Flux (Jy km s$^{-1}$)"
+        if _is_jy_beam(obs_bunit) and _is_jy_beam(sim_bunit)
+        else "Integrated (K km s$^{-1}$)"
+    )
     x, y = offset_axes_arcsec(obs_cube.shape[0], obs_cube.shape[1], priors.cellsize_arcsec)
 
     spec_ylim = (
@@ -325,14 +363,14 @@ def save_cube_comparison_plots(
     axes[0, 2].plot(obs_vel, obs_spec, drawstyle="steps", color="k")
     axes[0, 2].set_title("Observed spectrum")
     axes[0, 2].set_xlabel("Velocity (km s$^{-1}$)")
-    axes[0, 2].set_ylabel("Flux (Jy km s$^{-1}$)")
+    axes[0, 2].set_ylabel(spec_ylabel)
     axes[0, 2].set_xlim(spec_xlim)
     axes[0, 2].set_ylim(spec_ylim)
 
     axes[1, 2].plot(sim_vel, sim_spec, drawstyle="steps", color="r")
     axes[1, 2].set_title("Simulated spectrum")
     axes[1, 2].set_xlabel("Velocity (km s$^{-1}$)")
-    axes[1, 2].set_ylabel("Flux (Jy km s$^{-1}$)")
+    axes[1, 2].set_ylabel(spec_ylabel)
     axes[1, 2].set_xlim(spec_xlim)
     axes[1, 2].set_ylim(spec_ylim)
 
@@ -343,6 +381,27 @@ def save_cube_comparison_plots(
     written.append(cmp_path)
 
     return written
+
+
+def write_simcube_fits_in_k(
+    cube_jy_beam: np.ndarray,
+    *,
+    obs_cube_path: Path,
+    output_path: Path,
+    vel_centers_kms: np.ndarray | None = None,
+) -> None:
+    """Write a KinMS ``Jy/beam`` cube converted to ``K`` with observed WCS."""
+    from kinms_grid import load_obs_cube_fits_shape, write_simcube_fits
+
+    _, obs_header = load_obs_cube_fits_shape(obs_cube_path)
+    cube_k = cube_jy_beam_to_k(cube_jy_beam, obs_header)
+    write_simcube_fits(
+        cube_k,
+        obs_cube_path=obs_cube_path,
+        output_path=output_path,
+        bunit="K",
+        vel_centers_kms=vel_centers_kms,
+    )
 
 
 def integrated_flux_jy_kms(
@@ -362,13 +421,15 @@ def mom0_cross_correlation(
     obs_cube: np.ndarray,
     obs_header: fits.Header,
     sim_cube: np.ndarray,
+    *,
+    sim_bunit: str = "Jy/beam",
 ) -> float:
     """Pearson correlation between observed and simulated mom0 maps."""
     obs_vel = velocity_axis_kms(obs_header, obs_cube.shape[2])
     sim_vel = velocity_axis_kms(obs_header, sim_cube.shape[2])
     cal = build_flux_calibration(obs_header, (obs_cube.shape[1], obs_cube.shape[0]))
     obs_m0 = moment0_kkms_per_beam(obs_cube, obs_vel, cal, bunit=_cube_bunit(obs_header))
-    sim_m0 = moment0_kkms_per_beam(sim_cube, sim_vel, cal, bunit="Jy/beam")
+    sim_m0 = moment0_kkms_per_beam(sim_cube, sim_vel, cal, bunit=str(sim_bunit).strip())
     mask = np.isfinite(obs_m0) & np.isfinite(sim_m0)
     if not np.any(mask) or mask.sum() < 4:
         return float("nan")

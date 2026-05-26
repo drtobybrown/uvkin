@@ -83,6 +83,21 @@ def cube_channel_width_kms(cube_header: fits.Header) -> float:
     return abs(float(cube_header["CDELT3"]))
 
 
+def imaging_spatial_grid_from_header(
+    header: fits.Header,
+) -> tuple[int, int, float]:
+    """``(nx, ny, cellsize_arcsec)`` from a DR1-style imaging cube header."""
+    nx = int(header["NAXIS1"])
+    ny = int(header["NAXIS2"])
+    cellsize_arcsec = abs(float(header["CDELT1"])) * 3600.0
+    if nx < 1 or ny < 1 or cellsize_arcsec <= 0.0:
+        raise ValueError(
+            f"Invalid imaging grid from header: nx={nx} ny={ny} "
+            f"cellsize={cellsize_arcsec} arcsec"
+        )
+    return nx, ny, float(cellsize_arcsec)
+
+
 def load_obs_cube_fits_shape(cube_path: Path) -> tuple[tuple[int, int, int], fits.Header]:
     """Return native FITS shape ``(nchan, ny, nx)`` and header for a cube."""
     with fits.open(cube_path) as hdul:

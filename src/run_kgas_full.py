@@ -343,13 +343,16 @@ from kinms_grid import (
     MomentPriors,
     build_inclouds_from_moments,
     build_moment_priors,
+    imaging_spatial_grid_from_header,
     make_cube_inclouds,
     write_simcube_fits,
 )
 from kinms_diagnostics import (
+    cube_jy_beam_to_k,
     integrated_flux_jy_kms,
     mom0_cross_correlation,
     save_cube_comparison_plots,
+    write_simcube_fits_in_k,
 )
 from prior_seed import load_moment_fits
 from mcmc_diagnostics import (
@@ -503,6 +506,25 @@ elif args.use_imaging_seeds:
         "--use-imaging-seeds requested but no imaging products supplied via YAML "
         "(galaxy.imaging_products) or CLI (--imaging-mom0/mom1/mom2/cube)."
     )
+
+if (
+    _imaging_paths is not None
+    and _imaging_paths.cube is not None
+    and _imaging_paths.cube.is_file()
+):
+    _grid_hdr = fits.getheader(_imaging_paths.cube)
+    _nx_img, _ny_img, _cell_img = imaging_spatial_grid_from_header(_grid_hdr)
+    log.info(
+        "KinMS MCMC grid from imaging cube: nx=%d ny=%d cellsize=%.4f arcsec "
+        "(yaml shared default %d×%d @ %.4f)",
+        _nx_img,
+        _ny_img,
+        _cell_img,
+        int(PIPE.shared.nx),
+        int(PIPE.shared.ny),
+        float(PIPE.shared.cellsize_arcsec),
+    )
+    NX, NY, CELLSIZE = _nx_img, _ny_img, _cell_img
 
 # ---------------------------------------------------------------------------
 # Load and trim data
@@ -890,11 +912,11 @@ if _do_preflight_cube and _imaging_preflight_result is not None:
 
     _preflight_dir = outdir / "preflight_inclouds"
     _preflight_dir.mkdir(parents=True, exist_ok=True)
-    write_simcube_fits(
+    _sim_cube_k = cube_jy_beam_to_k(_sim_cube, _cube_hdr)
+    write_simcube_fits_in_k(
         _sim_cube,
         obs_cube_path=_imaging_paths.cube,
         output_path=_preflight_dir / "preflight_inclouds_simcube.fits",
-        bunit="Jy/beam",
     )
 
     from kinms_grid import load_observed_cube_for_plot as _load_obs_for_plot
@@ -903,21 +925,24 @@ if _do_preflight_cube and _imaging_preflight_result is not None:
     _pngs = save_cube_comparison_plots(
         obs_cube=_obs_cube_xync,
         obs_header=_obs_hdr_plot,
-        sim_cube=_sim_cube,
+        sim_cube=_sim_cube_k,
         priors=moment_priors_obj,
         plot_dir=_preflight_dir,
+        sim_bunit="K",
     )
 
     _flux_obs_jy_kms = integrated_flux_jy_kms(
         _obs_cube_xync, _obs_hdr_plot, bunit=str(_obs_hdr_plot.get("BUNIT", "K"))
     )
     _flux_sim_jy_kms = integrated_flux_jy_kms(
-        _sim_cube, _obs_hdr_plot, bunit="Jy/beam"
+        _sim_cube_k, _obs_hdr_plot, bunit="K"
     )
     _flux_ratio = (
         _flux_sim_jy_kms / _flux_obs_jy_kms if _flux_obs_jy_kms != 0 else float("nan")
     )
-    _mom0_r = mom0_cross_correlation(_obs_cube_xync, _obs_hdr_plot, _sim_cube)
+    _mom0_r = mom0_cross_correlation(
+        _obs_cube_xync, _obs_hdr_plot, _sim_cube_k, sim_bunit="K"
+    )
 
     log.info("=" * 60)
     log.info("PREFLIGHT CUBE (KinMS inClouds vs observed):")
@@ -1710,15 +1735,14 @@ if (
 ):
     _best_cube_xync = np.transpose(np.asarray(best_cube), (2, 1, 0))
     _vel_centers_bestfit = np.asarray(vel_trim, dtype=np.float64)
-    write_simcube_fits(
+    write_simcube_fits_in_k(
         _best_cube_xync,
         obs_cube_path=_imaging_paths.cube,
         output_path=cube_fits_path,
-        bunit="Jy/beam",
         vel_centers_kms=_vel_centers_bestfit,
     )
     log.info(
-        "Best-fit cube saved with observed-WCS template (BUNIT=Jy/beam, "
+        "Best-fit cube saved with observed-WCS template (BUNIT=K, "
         "NCHAN=%d, median dv=%.3f km/s) to %s",
         _best_cube_xync.shape[2],
         float(np.median(np.abs(np.diff(_vel_centers_bestfit))))
@@ -1749,29 +1773,32 @@ if (
         _vel_imaging = velocity_centers_from_cube_header(
             fits.getheader(_imaging_paths.cube)
         )
-        write_simcube_fits(
+        _map_cube_k = cube_jy_beam_to_k(
+            _map_cube_imaging, fits.getheader(_imaging_paths.cube)
+        )
+        write_simcube_fits_in_k(
             _map_cube_imaging,
             obs_cube_path=_imaging_paths.cube,
             output_path=_map_fits,
-            bunit="Jy/beam",
             vel_centers_kms=_vel_imaging,
         )
         _obs_xync, _obs_hdr_map = _load_obs(_imaging_paths.cube)
         _map_pngs = save_cube_comparison_plots(
             obs_cube=_obs_xync,
             obs_header=_obs_hdr_map,
-            sim_cube=_map_cube_imaging,
+            sim_cube=_map_cube_k,
             priors=_map_priors,
             plot_dir=_imaging_grid_dir,
+            sim_bunit="K",
         )
         _flux_obs_map = integrated_flux_jy_kms(
             _obs_xync, _obs_hdr_map, bunit=str(_obs_hdr_map.get("BUNIT", "K"))
         )
         _flux_sim_map = integrated_flux_jy_kms(
-            _map_cube_imaging, _obs_hdr_map, bunit="Jy/beam"
+            _map_cube_k, _obs_hdr_map, bunit="K"
         )
         _mom0_corr_map = mom0_cross_correlation(
-            _obs_xync, _obs_hdr_map, _map_cube_imaging
+            _obs_xync, _obs_hdr_map, _map_cube_k, sim_bunit="K"
         )
         log.info("=" * 60)
         log.info("BEST-FIT ON IMAGING GRID (gNFW MAP @ DR1 30 km/s footprint):")

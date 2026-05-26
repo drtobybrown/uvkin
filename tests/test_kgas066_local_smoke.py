@@ -234,6 +234,20 @@ def test_bestfit_on_imaging_grid_outputs(smoke_run):
     assert (grid_dir / "comparison.png").is_file()
 
 
+def test_bestfit_cube_matches_imaging_spatial_grid(smoke_run):
+    """MCMC cube uses nx/ny from imaging header (135×135), not yaml 256×256."""
+    from astropy.io import fits
+
+    bestfit = smoke_run["outdir"] / "bestfit_cube.fits"
+    template = _IMG_DIR / "KGAS66_clipped_cube.fits"
+    with fits.open(bestfit) as hdul:
+        h_bf = hdul[0].header
+    with fits.open(template) as hdul:
+        h_obs = hdul[0].header
+    assert int(h_bf["NAXIS1"]) == int(h_obs["NAXIS1"])
+    assert int(h_bf["NAXIS2"]) == int(h_obs["NAXIS2"])
+
+
 def test_bestfit_cube_spectral_wcs_matches_vis_grid(smoke_run):
     """bestfit_cube.fits must not copy imaging CDELT3 when NCHAN differs."""
     from astropy.io import fits
@@ -281,7 +295,7 @@ def test_bestfit_cube_has_observed_wcs_template(smoke_run):
             )
     assert int(h_best["NAXIS3"]) > int(h_obs["NAXIS3"])
     assert abs(float(h_best["CDELT3"])) == pytest.approx(5.08, rel=0.05)
-    assert str(h_best["BUNIT"]).strip() == "Jy/beam"
+    assert str(h_best["BUNIT"]).strip() == "K"
 
 
 def test_result_npz_has_imaging_preflight(smoke_run):

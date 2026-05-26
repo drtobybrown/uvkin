@@ -9,9 +9,11 @@ from astropy.io import fits
 from kinms_diagnostics import (
     build_flux_calibration,
     collapsed_spectrum_jy_kms,
+    cube_jy_beam_to_k,
     integrated_flux_jy_kms,
     mom0_cross_correlation,
     save_cube_comparison_plots,
+    write_simcube_fits_in_k,
 )
 from kinms_grid import MomentPriors
 
@@ -85,6 +87,28 @@ def _moment_priors_for_cube(header: fits.Header) -> MomentPriors:
         dec_deg=-1.0,
         nu_obs_hz=224.17e9,
     )
+
+
+def test_cube_jy_beam_to_k_roundtrip():
+    hdr = _make_cube_header(bunit="K")
+    cal = build_flux_calibration(hdr, (16, 16))
+    cube_k = np.ones((16, 16, 5)) * 0.5
+    cube_jy = cube_k * cal.jy_per_beam_per_k
+    cube_back = cube_jy_beam_to_k(cube_jy, hdr)
+    assert np.allclose(cube_k, cube_back, rtol=1e-6)
+
+
+def test_write_simcube_fits_in_k_sets_bunit(tmp_path):
+    hdr = _make_cube_header(nx=16, ny=16, nchan=5, bunit="K")
+    obs_path = tmp_path / "obs.fits"
+    fits.PrimaryHDU(
+        data=np.zeros((5, 16, 16), dtype=np.float32), header=hdr
+    ).writeto(obs_path)
+    cube_jy = np.ones((16, 16, 5), dtype=np.float32) * 1e-5
+    out_path = tmp_path / "sim_k.fits"
+    write_simcube_fits_in_k(cube_jy, obs_cube_path=obs_path, output_path=out_path)
+    with fits.open(out_path) as hdul:
+        assert str(hdul[0].header["BUNIT"]).strip() == "K"
 
 
 def test_collapsed_spectrum_consistent_between_k_and_jy_inputs():
