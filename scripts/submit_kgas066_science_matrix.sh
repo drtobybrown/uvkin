@@ -18,12 +18,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-UVKIN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ARC_BASE="${ARC_BASE:-/arc/projects/KILOGAS/analysis/toby_sandbox}"
+# CANFAR jobs must use /arc paths (not the local git checkout path).
+UVKIN_DIR="${UVKIN_DIR:-${ARC_BASE}/uvkin}"
 VIS_DIR="${ARC_BASE}/visibilities"
 RESULTS_BASE="${ARC_BASE}/results"
-RUN_UVKIN="${UVKIN_DIR}/scripts/run_uvkin.sh"
-PIPE_SCRIPT="${UVKIN_DIR}/src/run_kgas_full.py"
+RUN_MATRIX_JOB="${UVKIN_DIR}/scripts/run_science_matrix_job.sh"
 CONDA_ENV="${CONDA_ENV:-uvkin}"
 IMAGE="${CANFAR_IMAGE:-images.canfar.net/skaha/astroml:latest}"
 GALAXY="KILOGAS066"
@@ -72,29 +72,27 @@ python3 "${SCRIPT_DIR}/generate_kgas066_science_matrix.py" \
     --results-base "${RESULTS_BASE}" \
     --tier "${_gen_tier}"
 
-DATA="${VIS_DIR}/${GALAXY}.npz"
-
 submit_one() {
     local eid="$1"
     local settings="$2"
     local outdir="$3"
-    local extra="$4"
-    local cfg="${UVKIN_DIR}/config/${settings}"
+    local _extra="$4"
     local job_name
-    job_name="$(echo "${GALAXY}-${eid}-${CHAIN_MODE}" | tr '[:upper:]' '[:lower:]')"
+    # Short session name (canfar name length limits; no underscores in some APIs).
+    job_name="$(echo "${GALAXY}-${eid}-${CHAIN_MODE}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
 
-    local cmd="bash ${RUN_UVKIN} --data ${DATA} --results-dest ${outdir} --kgas-id ${KGAS_ID} \
-      --pipeline-settings ${cfg} --script ${PIPE_SCRIPT} --conda-env ${CONDA_ENV} \
-      --n-walkers ${N_WALKERS} --n-processes ${N_PROCESSES} --converge \
-      --check-interval ${CHECK_INTERVAL} --max-steps ${MAX_STEPS} ${extra}"
+    # Thin wrapper keeps canfar launch URL under Skaha query limits.
+    local cmd="bash ${RUN_MATRIX_JOB} ${eid} ${CHAIN_MODE}"
 
     echo "----------------------------------------------"
     echo "${eid} (${CHAIN_MODE}, max_steps=${MAX_STEPS})"
-    echo "  settings: ${cfg}"
+    echo "  wrapper : ${RUN_MATRIX_JOB}"
+    echo "  settings: ${UVKIN_DIR}/config/${settings}"
     echo "  outdir  : ${outdir}"
 
     if [[ "${DRY_RUN}" == true ]]; then
         echo "  [DRY] ${cmd}"
+        echo "  [DRY] (on ARC, expands to run_uvkin.sh + manifest extra_run_args)"
     else
         canfar launch --name "${job_name}" headless "${IMAGE}" -- ${cmd}
         echo "  -> submitted"

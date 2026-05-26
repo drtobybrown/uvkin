@@ -56,6 +56,8 @@ python3 scripts/generate_kgas066_science_matrix.py --tier core ...
 
 ### 2. Pilot chains
 
+Submit from your laptop via `canfar` (uses `/arc/.../uvkin` paths inside the container, not your local checkout path). Regenerate the manifest on ARC or ensure `${ARC_BASE}/uvkin` is up to date before submitting.
+
 ```bash
 # Core comparison (6 jobs) — recommended first tranche
 bash scripts/submit_kgas066_science_matrix.sh --pilot --core --dry
