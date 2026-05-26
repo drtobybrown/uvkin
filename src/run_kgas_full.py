@@ -228,6 +228,30 @@ parser.add_argument(
     action="store_false",
     help="Allow MCMC to explore pa, inc, vsys, dx, dy (overrides YAML freeze_imaging_geometry).",
 )
+parser.add_argument(
+    "--fix-gamma",
+    nargs="?",
+    const=1.0,
+    type=float,
+    default=None,
+    metavar="VALUE",
+    help=(
+        "Freeze gamma at VALUE (default 1.0 when flag given without VALUE). "
+        "Overrides galaxies.<id>.fix_gamma in YAML."
+    ),
+)
+parser.add_argument(
+    "--fix-r-scale",
+    nargs="?",
+    const=-1.0,
+    type=float,
+    default=None,
+    metavar="VALUE",
+    help=(
+        "Freeze r_scale at VALUE arcsec (default: imaging/catalog seed when flag "
+        "given without VALUE). Overrides galaxies.<id>.fix_r_scale in YAML."
+    ),
+)
 
 args = parser.parse_args()
 
@@ -256,6 +280,20 @@ _freeze_imaging_geometry = (
     if args.freeze_imaging_geometry is not None
     else bool(getattr(_cfg, "freeze_imaging_geometry", False))
 )
+_fix_gamma: float | None = (
+    float(args.fix_gamma)
+    if args.fix_gamma is not None
+    else getattr(_cfg, "fix_gamma", None)
+)
+_fix_r_scale_value: float | None = None
+_fix_r_scale_from_seed = False
+if args.fix_r_scale is not None:
+    if float(args.fix_r_scale) < 0.0:
+        _fix_r_scale_from_seed = True
+    else:
+        _fix_r_scale_value = float(args.fix_r_scale)
+elif getattr(_cfg, "fix_r_scale", None) is not None:
+    _fix_r_scale_value = float(_cfg.fix_r_scale)
 PA_INIT = _cfg.pa_init
 INC_INIT = _cfg.inc_init
 VSYS = args.vsys if args.vsys is not None else _cfg.vsys
@@ -320,6 +358,7 @@ from fit_bounds import (
     MCMC_FREE_WHEN_GEOMETRY_FROZEN,
     format_resolved_empirical_bounds,
     freeze_imaging_geometry_bounds,
+    freeze_parameter_bounds,
     gas_sigma_prior_interval,
     get_empirical_bounds,
 )
@@ -1195,6 +1234,22 @@ if _freeze_imaging_geometry:
     log.info("  dy (arcsec)  : %.6f", _centroid_seed[1])
     log.info("=" * 60)
 
+if _fix_r_scale_from_seed:
+    _fix_r_scale_value = float(R_SCALE)
+_frozen_shape: dict[str, float] = {}
+if _fix_gamma is not None:
+    _frozen_shape["gamma"] = float(_fix_gamma)
+if _fix_r_scale_value is not None:
+    _frozen_shape["r_scale"] = float(_fix_r_scale_value)
+if _frozen_shape:
+    empirical_bounds = freeze_parameter_bounds(empirical_bounds, _frozen_shape)
+    _bounds_label = f"{_bounds_label} + frozen {', '.join(sorted(_frozen_shape))}"
+    log.info("=" * 60)
+    log.info("FROZEN SHAPE PARAMETERS — pinned for MCMC")
+    for _fk, _fv in sorted(_frozen_shape.items()):
+        log.info("  %s : %.6f", _fk, _fv)
+    log.info("=" * 60)
+
 log.info("=" * 60)
 log.info("BOUNDS — resolved MCMC box prior (%s, after gas_sigma floor)", _bounds_label)
 for _line in format_resolved_empirical_bounds(empirical_bounds).splitlines():
@@ -1458,11 +1513,11 @@ init_params = {
     "flux": mcmc_flux_jy_kms,
     "vsys": float(VSYS),
     "gas_sigma": GAS_SIGMA_INIT,
-    "gamma": 0.5,
+    "gamma": float(_fix_gamma) if _fix_gamma is not None else 0.5,
     "dx": float(_centroid_seed[0]),
     "dy": float(_centroid_seed[1]),
     "vmax": float(VMAX),
-    "r_scale": float(R_SCALE),
+    "r_scale": float(_fix_r_scale_value if _fix_r_scale_value is not None else R_SCALE),
 }
 if (
     _imaging_preflight_result is not None

@@ -50,6 +50,25 @@ Top-level sections follow the runtime order:
   vsys, dx, dy fixed at seeds; MCMC fits flux, gamma, vmax, gas_sigma,
   r_scale). inClouds preflight still uses native **30 km/s** DR1 cubes.
   Submit: `bash scripts/submit_kgas.sh KGAS066 diagnose_5kms_frozen`.
+- `config/uvkin_settings_diagnose_30kms_frozen.yaml` — **~30 km/s** visibility
+  binning with the same frozen geometry as the 5 km/s profile (science matrix
+  spectral-resolution arm). Submit: `bash scripts/submit_kgas.sh KGAS066 diagnose_30kms_frozen`.
+
+### KGAS066 science matrix
+
+Eight controlled experiments (flux anchor × 5/30 km/s × free/fix γ/r_scale):
+
+```bash
+python3 scripts/generate_kgas066_science_matrix.py
+bash scripts/submit_kgas066_science_matrix.sh --pilot --dry   # 15k-step pilots
+python3 scripts/aggregate_science_matrix.py --also-scan /path/to/results/KILOGAS066
+```
+
+See [docs/kgas066_science_matrix.md](docs/kgas066_science_matrix.md) and
+[docs/kgas066_science_recommendation.md](docs/kgas066_science_recommendation.md).
+
+CLI: `--fix-gamma [VALUE]`, `--fix-r-scale [VALUE]` pin shape parameters for
+wall-pressure tests.
 
 The seed-matrix helper accepts `--base-pipeline-settings` to materialize
 variants from the same catalogue.

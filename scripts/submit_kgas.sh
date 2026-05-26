@@ -62,10 +62,11 @@ RUN_UVKIN="${UVKIN_DIR}/scripts/run_uvkin.sh"
 #                    so --mom0-threshold=0.0 keeps every finite positive pixel).
 #   diagnose_5kms_frozen — ~5 km/s vis bin; freeze pa/inc/vsys/dx/dy at imaging;
 #                    fit flux, gamma, vmax, gas_sigma, r_scale; preflight 30 km/s.
+#   diagnose_30kms_frozen — ~30 km/s vis bin; same frozen geometry (science matrix).
 #   open_explore   — wide priors, ~10 km/s bin (spectral_bin_factor: 8), no
 #                    imaging seeding; explores the box prior end-to-end.
 #   production     — uvkin_settings.yaml defaults; no imaging seeding.
-VALID_PROFILES="diagnose_30kms diagnose_5kms_frozen open_explore production"
+VALID_PROFILES="diagnose_30kms diagnose_5kms_frozen diagnose_30kms_frozen open_explore production"
 
 # ── Parse CLI (after defaults; env PIPELINE_PROFILE is the fallback) ──
 DRY_RUN=false
@@ -77,7 +78,7 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
-        diagnose_30kms|diagnose_5kms_frozen|open_explore|production)
+        diagnose_30kms|diagnose_5kms_frozen|diagnose_30kms_frozen|open_explore|production)
             _ARGS_PROFILE="$1"
             shift
             ;;
@@ -119,6 +120,19 @@ case "${PIPELINE_PROFILE}" in
         ;;
     diagnose_5kms_frozen)
         PIPELINE_SETTINGS="${UVKIN_DIR}/config/uvkin_settings_diagnose_5kms_frozen.yaml"
+        MAX_STEPS="${MAX_STEPS:-80000}"
+        PROFILE_FLAGS=(
+            --use-imaging-seeds
+            --freeze-imaging-geometry
+            --no-imaging-tight-priors
+            --write-preflight-cube
+            --mom0-threshold 0.0
+            --flux-seed-source auto
+            --run-flux-audit
+        )
+        ;;
+    diagnose_30kms_frozen)
+        PIPELINE_SETTINGS="${UVKIN_DIR}/config/uvkin_settings_diagnose_30kms_frozen.yaml"
         MAX_STEPS="${MAX_STEPS:-80000}"
         PROFILE_FLAGS=(
             --use-imaging-seeds

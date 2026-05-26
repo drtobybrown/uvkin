@@ -188,6 +188,20 @@ FROZEN_GEOMETRY_KEYS = ("pa", "inc", "vsys", "dx", "dy")
 MCMC_FREE_WHEN_GEOMETRY_FROZEN = ("flux", "gamma", "vmax", "gas_sigma", "r_scale")
 
 
+def freeze_parameter_bounds(
+    bounds: dict[str, tuple[float, float]],
+    frozen: dict[str, float],
+) -> dict[str, tuple[float, float]]:
+    """Pin parameters at fixed values; ``BoundedGNFWKinMSModel`` treats ``lo == hi`` as frozen."""
+    out = dict(bounds)
+    for key, value in frozen.items():
+        if key not in out:
+            raise KeyError(f"freeze_parameter_bounds: unknown key {key!r}")
+        v = float(value)
+        out[key] = (v, v)
+    return out
+
+
 def freeze_imaging_geometry_bounds(
     bounds: dict[str, tuple[float, float]],
     *,
@@ -198,10 +212,13 @@ def freeze_imaging_geometry_bounds(
     dy_arcsec: float,
 ) -> dict[str, tuple[float, float]]:
     """Pin imaging-derived geometry; ``BoundedGNFWKinMSModel`` treats ``lo == hi`` as frozen."""
-    out = dict(bounds)
-    out["pa"] = (float(pa_deg), float(pa_deg))
-    out["inc"] = (float(inc_deg), float(inc_deg))
-    out["vsys"] = (float(vsys_kms), float(vsys_kms))
-    out["dx"] = (float(dx_arcsec), float(dx_arcsec))
-    out["dy"] = (float(dy_arcsec), float(dy_arcsec))
-    return out
+    return freeze_parameter_bounds(
+        bounds,
+        {
+            "pa": pa_deg,
+            "inc": inc_deg,
+            "vsys": vsys_kms,
+            "dx": dx_arcsec,
+            "dy": dy_arcsec,
+        },
+    )

@@ -101,6 +101,18 @@ def test_load_diagnose_5kms_frozen_settings():
     assert mb.gas_sigma == (5.0, 50.0)
 
 
+def test_load_diagnose_30kms_frozen_settings():
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "config"
+        / "uvkin_settings_diagnose_30kms_frozen.yaml"
+    )
+    pipe = load_pipeline_settings(path)
+    assert pipe.aggregation.spectral_bin_factor == 24
+    g66 = pipe.galaxies["KGAS066"]
+    assert g66.freeze_imaging_geometry is True
+
+
 def test_load_explicit_path():
     here = Path(__file__).resolve().parent.parent / "config" / "uvkin_settings.yaml"
     pipe = load_pipeline_settings(here)

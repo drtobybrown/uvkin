@@ -228,6 +228,10 @@ def _parse_galaxy(
         freeze_imaging_geometry = freeze_geom_raw
     else:
         freeze_imaging_geometry = bool(freeze_geom_raw)
+    fix_gamma_raw = m.get("fix_gamma", None)
+    fix_gamma = None if fix_gamma_raw is None else float(fix_gamma_raw)
+    fix_r_scale_raw = m.get("fix_r_scale", None)
+    fix_r_scale = None if fix_r_scale_raw is None else float(fix_r_scale_raw)
 
     return GalaxyConfig(
         kilogas_archive_id=str(m["kilogas_archive_id"]),
@@ -249,6 +253,8 @@ def _parse_galaxy(
         flux_seed_source=flux_seed_src,
         flux_bounds_jy_kms=flux_bounds,
         freeze_imaging_geometry=freeze_imaging_geometry,
+        fix_gamma=fix_gamma,
+        fix_r_scale=fix_r_scale,
     )
 
 
