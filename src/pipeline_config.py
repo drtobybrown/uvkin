@@ -44,6 +44,12 @@ def _parse_shared(m: Mapping[str, Any]) -> SharedConfig:
     wsf = float(wsf)
     if wsf <= 0.0:
         raise ValueError(f"shared.weight_scale_factor must be positive; got {wsf}")
+    margin_ch = int(m.get("spectral_trim_margin_channels", 3))
+    if margin_ch < 0:
+        raise ValueError(
+            f"shared.spectral_trim_margin_channels must be >= 0; got {margin_ch}"
+        )
+    trim_from_cube = bool(m.get("spectral_trim_from_imaging_cube", True))
     return SharedConfig(
         default_channel_width_kms=float(m["default_channel_width_kms"]),
         cellsize_arcsec=float(m["cellsize_arcsec"]),
@@ -53,6 +59,8 @@ def _parse_shared(m: Mapping[str, Any]) -> SharedConfig:
         f_rest_hz=float(m["f_rest_hz"]),
         c_kms=float(m["c_kms"]),
         weight_scale_factor=wsf,
+        spectral_trim_from_imaging_cube=trim_from_cube,
+        spectral_trim_margin_channels=margin_ch,
     )
 
 

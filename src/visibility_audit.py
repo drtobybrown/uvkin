@@ -79,6 +79,8 @@ def line_mask_from_velocity_axis(
     vsys_kms: float,
     line_width_kms: float,
     vel_buffer_kms: float = 0.0,
+    v_lo_line: float | None = None,
+    v_hi_line: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(line_idx, off_idx)`` boolean masks over the channel axis.
 
@@ -99,16 +101,20 @@ def line_mask_from_velocity_axis(
         raise ValueError(f"line_width_kms must be positive; got {line_width_kms}")
 
     vel = C_KMS * (1.0 - freqs / float(f_rest_hz))
-    half = max(0.5 * float(line_width_kms), 0.5)
-    buf = max(float(vel_buffer_kms), 0.0)
-    line = (vel >= float(vsys_kms) - half) & (vel <= float(vsys_kms) + half)
-    if buf > 0.0:
-        off_window = (vel >= float(vsys_kms) - half - buf) & (
-            vel <= float(vsys_kms) + half + buf
-        )
-        off = off_window & (~line)
-    else:
+    if v_lo_line is not None and v_hi_line is not None:
+        line = (vel >= float(v_lo_line)) & (vel <= float(v_hi_line))
         off = ~line
+    else:
+        half = max(0.5 * float(line_width_kms), 0.5)
+        buf = max(float(vel_buffer_kms), 0.0)
+        line = (vel >= float(vsys_kms) - half) & (vel <= float(vsys_kms) + half)
+        if buf > 0.0:
+            off_window = (vel >= float(vsys_kms) - half - buf) & (
+                vel <= float(vsys_kms) + half + buf
+            )
+            off = off_window & (~line)
+        else:
+            off = ~line
     if int(line.sum()) == 0:
         raise ValueError(
             f"Line mask is empty: vsys={vsys_kms} km/s, line_width={line_width_kms} "
@@ -351,6 +357,8 @@ def audit_visibilities(
     vsys_kms: float,
     line_width_kms: float,
     vel_buffer_kms: float = 0.0,
+    v_lo_line: float | None = None,
+    v_hi_line: float | None = None,
     short_pct: float = 5.0,
     n_uv_bins: int = 20,
 ) -> AuditResult:
@@ -376,6 +384,8 @@ def audit_visibilities(
         vsys_kms=vsys_kms,
         line_width_kms=line_width_kms,
         vel_buffer_kms=vel_buffer_kms,
+        v_lo_line=v_lo_line,
+        v_hi_line=v_hi_line,
     )
 
     vel = C_KMS * (1.0 - np.asarray(freqs_hz, dtype=np.float64) / float(f_rest_hz))

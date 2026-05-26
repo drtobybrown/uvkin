@@ -290,6 +290,32 @@ parser.add_argument(
         "DR1 vmax/r_scale/gas_sigma with MAP gamma only; mcmc_map uses full MAP."
     ),
 )
+parser.add_argument(
+    "--spectral-trim-from-imaging-cube",
+    dest="spectral_trim_from_imaging_cube",
+    action="store_true",
+    default=None,
+    help=(
+        "Trim native visibilities to the full DR1 cube velocity span plus "
+        "margin channels (default when imaging cube is available)."
+    ),
+)
+parser.add_argument(
+    "--no-spectral-trim-from-imaging-cube",
+    dest="spectral_trim_from_imaging_cube",
+    action="store_false",
+    help="Use vsys ± line_width/2 ± vel_buffer trim instead of imaging cube axis.",
+)
+parser.add_argument(
+    "--spectral-trim-margin-channels",
+    type=int,
+    default=None,
+    metavar="N",
+    help=(
+        "Extra native channels kept beyond cube v_min/v_max each side for "
+        "off-line constraints (default: shared.spectral_trim_margin_channels)."
+    ),
+)
 
 args = parser.parse_args()
 
@@ -410,7 +436,11 @@ from fit_bounds import (
     gas_sigma_prior_interval,
     get_empirical_bounds,
 )
-from spectral_windows import build_velocity_windows, compute_line_channel_mask
+from spectral_windows import (
+    compute_line_channel_mask,
+    native_channel_spacing_kms,
+    resolve_spectral_trim,
+)
 from uv_aggregate import (
     AggregationConfig,
     aggregate_visibilities,
@@ -451,7 +481,6 @@ from mcmc_diagnostics import (
 )
 from flux_audit_runner import (
     AggregatedVis,
-    resolve_spectral_window,
     run_flux_audit_for_mcmc,
 )
 from visibility_audit import format_recommendation_log
@@ -582,7 +611,7 @@ if _imaging_paths is not None:
         GAS_SIGMA_INIT = _s.gas_sigma_kms
         if args.line_width_kms is None:
             LINE_WIDTH_KMS = _s.line_width_kms
-        if args.vsys is None:
+        if args.vel_buffer_kms is None:
             VEL_BUFFER_EFFECTIVE = _s.vel_buffer_kms
         log.info(
             "Applied --use-imaging-seeds: vsys=%.3f vmax=%.3f r_scale=%.3f "
@@ -730,12 +759,53 @@ u_m_all, v_m_all, vis_all, weights_all = cast_uv_arrays(
 )
 
 vel_all = C_KMS * (1.0 - freqs_all / F_REST)
-v_lo_line, v_hi_line, v_lo, v_hi = build_velocity_windows(
+_trim_use_cube = (
+    args.spectral_trim_from_imaging_cube
+    if args.spectral_trim_from_imaging_cube is not None
+    else PIPE.shared.spectral_trim_from_imaging_cube
+)
+_trim_margin_ch = (
+    int(args.spectral_trim_margin_channels)
+    if args.spectral_trim_margin_channels is not None
+    else int(PIPE.shared.spectral_trim_margin_channels)
+)
+_cube_hdr_trim = None
+if (
+    _imaging_paths is not None
+    and _imaging_paths.cube is not None
+    and _imaging_paths.cube.is_file()
+):
+    _cube_hdr_trim = fits.getheader(_imaging_paths.cube)
+
+_trim_spec = resolve_spectral_trim(
+    vel_all=vel_all,
     vsys_kms=VSYS,
     line_width_kms=LINE_WIDTH_KMS,
     vel_buffer_kms=VEL_BUFFER_EFFECTIVE,
+    cube_header=_cube_hdr_trim,
+    margin_channels=_trim_margin_ch,
+    use_imaging_cube=bool(_trim_use_cube and _cube_hdr_trim is not None),
 )
+v_lo_line = _trim_spec.v_lo_line
+v_hi_line = _trim_spec.v_hi_line
+v_lo = _trim_spec.v_lo_trim
+v_hi = _trim_spec.v_hi_trim
+LINE_WIDTH_KMS = _trim_spec.line_width_kms
+VEL_BUFFER_EFFECTIVE = _trim_spec.vel_buffer_kms
 chan_mask = (vel_all >= v_lo) & (vel_all <= v_hi)
+log.info(
+    "Spectral trim (%s): line [%.1f, %.1f] km/s; fit window [%.1f, %.1f] km/s "
+    "(%d / %d native channels); margin=%d ch/side (dv_native≈%.3f km/s)",
+    _trim_spec.source,
+    v_lo_line,
+    v_hi_line,
+    v_lo,
+    v_hi,
+    int(chan_mask.sum()),
+    int(vel_all.size),
+    _trim_spec.margin_channels,
+    native_channel_spacing_kms(vel_all),
+)
 
 # ---------------------------------------------------------------------------
 # Visibility aggregation — simplified order of operations:
@@ -1113,14 +1183,14 @@ _flux_seed_src = (
 )
 _run_flux_audit = bool(args.run_flux_audit) or _flux_seed_src == "auto"
 if _run_flux_audit:
-    _audit_window = resolve_spectral_window(
-        _cfg,
-        PIPE.shared,
-        vsys=args.vsys,
-        line_width_kms=args.line_width_kms,
+    _audit_window = SpectralWindow(
+        vsys_kms=VSYS,
+        line_width_kms=LINE_WIDTH_KMS,
         vel_buffer_kms=VEL_BUFFER_EFFECTIVE,
-        line_width_from_imaging=False,
-        cube_path=_imaging_paths.cube if _imaging_paths is not None else None,
+        v_lo_line=v_lo_line,
+        v_hi_line=v_hi_line,
+        v_lo_trim=v_lo,
+        v_hi_trim=v_hi,
     )
     _agg_vis = AggregatedVis(
         u_m=np.asarray(u_m_all),
@@ -1329,18 +1399,12 @@ import astropy.units as au
 
 log.info("=" * 60)
 log.info("PRE-FIT DIAGNOSTICS")
-log.info(
-    "Spectral trim from vsys/line_width with buffer: vsys=%.3f line_width=%.3f "
-    "buffer=%.3f (km/s)",
-    VSYS,
-    LINE_WIDTH_KMS,
-    VEL_BUFFER_EFFECTIVE,
-)
-
 line_chan = compute_line_channel_mask(
     vel_trim,
     vsys_kms=VSYS,
     line_width_kms=LINE_WIDTH_KMS,
+    v_lo_line=v_lo_line,
+    v_hi_line=v_hi_line,
 )
 offline_chan = ~line_chan
 n_line = int(line_chan.sum())

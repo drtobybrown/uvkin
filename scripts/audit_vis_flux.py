@@ -149,14 +149,14 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
-def _resolve_window(args, cfg, shared) -> tuple[float, float, float]:
-    """Resolve ``(vsys_kms, line_width_kms, vel_buffer_kms)`` for the audit."""
+def _resolve_window(args, cfg, shared, *, vel_all: np.ndarray | None = None):
+    """Resolve spectral window for trim / line masks."""
     from flux_audit_runner import resolve_spectral_window
 
     cube_path = args.imaging_cube
     if cube_path is None and cfg.imaging_products is not None:
         cube_path = cfg.imaging_products.cube
-    w = resolve_spectral_window(
+    return resolve_spectral_window(
         cfg,
         shared,
         vsys=args.vsys,
@@ -164,8 +164,8 @@ def _resolve_window(args, cfg, shared) -> tuple[float, float, float]:
         vel_buffer_kms=args.vel_buffer_kms,
         line_width_from_imaging=bool(args.line_width_from_imaging),
         cube_path=cube_path,
+        vel_all=vel_all,
     )
-    return w.vsys_kms, w.line_width_kms, w.vel_buffer_kms
 
 
 def _setup_logging(out: Path) -> logging.Logger:
@@ -286,26 +286,6 @@ def main(argv: list[str] | None = None) -> int:
     agg = pipe.aggregation
     f_rest_hz = float(shared.f_rest_hz)
 
-    vsys, line_width_kms, vel_buf = _resolve_window(args, cfg, shared)
-
-    log.info("=" * 60)
-    log.info("VISIBILITY AUDIT — %s", args.kgas_id)
-    log.info("  data                : %s", args.data)
-    log.info("  pipeline-settings   : %s", args.pipeline_settings or "(default)")
-    log.info("  outdir              : %s", out)
-    log.info("  vsys (km/s)         : %.3f", vsys)
-    log.info("  line_width_kms      : %.3f", line_width_kms)
-    log.info("  vel_buffer_kms      : %.3f", vel_buf)
-    log.info("  f_rest_hz           : %.6e", f_rest_hz)
-    log.info(
-        "  aggregation: time=%s uv_bin=%s spectral_bin_factor=%d uv_bin_size_m=%.2f time_bin_s=%.2f",
-        bool(agg.apply_time_averaging) and not args.no_time_average,
-        bool(agg.apply_uv_binning) and not args.no_uv_bin,
-        int(agg.spectral_bin_factor),
-        float(agg.uv_bin_size_m),
-        float(agg.time_bin_s),
-    )
-
     t0 = time.time()
     d = np.load(args.data)
     if "u_m" not in d.files or "v_m" not in d.files:
@@ -329,12 +309,39 @@ def main(argv: list[str] | None = None) -> int:
         u_m_all, v_m_all, vis_all, weights_all, "single"
     )
 
+    vel_all = C_KMS * (1.0 - freqs_all / f_rest_hz)
+    window = _resolve_window(args, cfg, shared, vel_all=vel_all)
+    vsys = window.vsys_kms
+    line_width_kms = window.line_width_kms
+    vel_buf = window.vel_buffer_kms
+
+    log.info("=" * 60)
+    log.info("VISIBILITY AUDIT — %s", args.kgas_id)
+    log.info("  data                : %s", args.data)
+    log.info("  pipeline-settings   : %s", args.pipeline_settings or "(default)")
+    log.info("  outdir              : %s", out)
+    log.info("  vsys (km/s)         : %.3f", vsys)
+    log.info("  line_width_kms      : %.3f", line_width_kms)
+    log.info("  vel_buffer_kms      : %.3f", vel_buf)
+    log.info("  f_rest_hz           : %.6e", f_rest_hz)
+    log.info(
+        "  aggregation: time=%s uv_bin=%s spectral_bin_factor=%d uv_bin_size_m=%.2f time_bin_s=%.2f",
+        bool(agg.apply_time_averaging) and not args.no_time_average,
+        bool(agg.apply_uv_binning) and not args.no_uv_bin,
+        int(agg.spectral_bin_factor),
+        float(agg.uv_bin_size_m),
+        float(agg.time_bin_s),
+    )
+
     # Spectral trim around the line so binning/audit operate on the same
     # window the MCMC sees.
-    vel_all = C_KMS * (1.0 - freqs_all / f_rest_hz)
-    half = max(0.5 * line_width_kms, 0.5)
-    v_lo = vsys - half - max(vel_buf, 0.0)
-    v_hi = vsys + half + max(vel_buf, 0.0)
+    if window.v_lo_trim is not None and window.v_hi_trim is not None:
+        v_lo = float(window.v_lo_trim)
+        v_hi = float(window.v_hi_trim)
+    else:
+        half = max(0.5 * line_width_kms, 0.5)
+        v_lo = vsys - half - max(vel_buf, 0.0)
+        v_hi = vsys + half + max(vel_buf, 0.0)
     chan_mask = (vel_all >= v_lo) & (vel_all <= v_hi)
     if int(chan_mask.sum()) < 2:
         raise SystemExit(
@@ -416,6 +423,8 @@ def main(argv: list[str] | None = None) -> int:
         vsys_kms=vsys,
         line_width_kms=line_width_kms,
         vel_buffer_kms=vel_buf,
+        v_lo_line=window.v_lo_line,
+        v_hi_line=window.v_hi_line,
         short_pct=float(args.short_pct),
         n_uv_bins=int(args.n_uv_bins),
     )
@@ -480,11 +489,7 @@ def main(argv: list[str] | None = None) -> int:
         pipeline_settings=(
             str(args.pipeline_settings) if args.pipeline_settings else None
         ),
-        window=SpectralWindow(
-            vsys_kms=vsys,
-            line_width_kms=line_width_kms,
-            vel_buffer_kms=vel_buf,
-        ),
+        window=window,
         short_pct=float(args.short_pct),
         apply_time_average=not args.no_time_average,
         apply_uv_bin=not args.no_uv_bin,

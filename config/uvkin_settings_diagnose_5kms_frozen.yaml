@@ -17,6 +17,8 @@ shared:
   f_rest_hz: 230538000000.0
   c_kms: 299792.458
   weight_scale_factor: 0.5
+  spectral_trim_from_imaging_cube: true
+  spectral_trim_margin_channels: 3   # native channels beyond cube v axis each side
 
 galaxies:
   KGAS007:

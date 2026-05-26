@@ -32,6 +32,8 @@ def test_load_full_settings():
     assert g66.dec_deg == pytest.approx(13.32909)
     assert pipe.aggregation.time_bin_s == 30.0
     assert pipe.aggregation.spectral_bin_factor == 8
+    assert pipe.shared.spectral_trim_from_imaging_cube is True
+    assert pipe.shared.spectral_trim_margin_channels == 3
     assert pipe.mcmc_bounds.vsys_offset_kms == (-200.0, 200.0)
     assert pipe.mcmc_bounds.inc_half_width_deg == 90.0
     assert pipe.mcmc_bounds.flux_multipliers == (0.05, 10.0)

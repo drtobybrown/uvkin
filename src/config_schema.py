@@ -87,6 +87,9 @@ class SharedConfig:
     c_kms: float
     default_channel_width_kms: float
     weight_scale_factor: float = 0.5  # Hanning smoothing correction (0.5 for ALMA)
+    # When imaging cube present: trim native vis to full cube v range + margin channels.
+    spectral_trim_from_imaging_cube: bool = True
+    spectral_trim_margin_channels: int = 3
 
 
 @dataclass(frozen=True)

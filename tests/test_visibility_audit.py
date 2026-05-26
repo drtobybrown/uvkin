@@ -52,6 +52,29 @@ def test_line_mask_indexes_correct_channels():
     assert int(off.sum()) > 0
 
 
+def test_line_mask_explicit_cube_interval():
+    """Imaging-cube line interval: off-line = trimmed wings outside cube axis."""
+    n_chan = 25
+    dv = 5.0
+    v_lo_cube = 8000.0
+    freqs = _freqs_for_velocity_grid(0.5 * (v_lo_cube + v_lo_cube + (n_chan - 1) * dv), n_chan, dv)
+    vel = C_KMS * (1.0 - freqs / F_REST)
+    v_lo_line = float(vel[3])
+    v_hi_line = float(vel[-4])
+    line, off = line_mask_from_velocity_axis(
+        freqs_hz=freqs,
+        f_rest_hz=F_REST,
+        vsys_kms=8300.0,
+        line_width_kms=100.0,
+        v_lo_line=v_lo_line,
+        v_hi_line=v_hi_line,
+    )
+    expected_line = (vel >= v_lo_line) & (vel <= v_hi_line)
+    np.testing.assert_array_equal(line, expected_line)
+    np.testing.assert_array_equal(off, ~expected_line)
+    assert int(off.sum()) == 3 + 3
+
+
 def test_line_mask_raises_when_line_window_empty():
     freqs = _freqs_for_velocity_grid(0.0, 21, 10.0)
     with pytest.raises(ValueError):

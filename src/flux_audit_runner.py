@@ -19,6 +19,7 @@ from uv_aggregate import (
     cast_uv_arrays,
     extract_time_and_baseline,
 )
+from spectral_windows import resolve_spectral_trim
 from visibility_audit import (
     AuditRecommendation,
     AuditResult,
@@ -30,11 +31,22 @@ from visibility_audit import (
 C_KMS = 299_792.458
 
 
+def velocity_axis_from_npz(data_path: Path | str, *, f_rest_hz: float) -> np.ndarray:
+    """Native velocity axis (km/s) from a visibility .npz."""
+    with np.load(data_path) as d:
+        freqs = np.asarray(d["freqs"], dtype=np.float64)
+    return C_KMS * (1.0 - freqs / float(f_rest_hz))
+
+
 @dataclass(frozen=True)
 class SpectralWindow:
     vsys_kms: float
     line_width_kms: float
     vel_buffer_kms: float
+    v_lo_line: float | None = None
+    v_hi_line: float | None = None
+    v_lo_trim: float | None = None
+    v_hi_trim: float | None = None
 
 
 @dataclass
@@ -58,6 +70,9 @@ def resolve_spectral_window(
     vel_buffer_kms: float | None = None,
     line_width_from_imaging: bool = False,
     cube_path: Path | str | None = None,
+    spectral_trim_from_imaging_cube: bool | None = None,
+    spectral_trim_margin_channels: int | None = None,
+    vel_all: np.ndarray | None = None,
 ) -> SpectralWindow:
     """Resolve vsys, line width, and buffer for trim / line masks."""
     v = float(vsys) if vsys is not None else float(cfg.vsys)
@@ -91,6 +106,39 @@ def resolve_spectral_window(
         buf = float(cfg.vel_buffer_kms)
     else:
         buf = float(shared.vel_buffer_kms)
+
+    use_cube_trim = (
+        spectral_trim_from_imaging_cube
+        if spectral_trim_from_imaging_cube is not None
+        else shared.spectral_trim_from_imaging_cube
+    )
+    margin_ch = (
+        int(spectral_trim_margin_channels)
+        if spectral_trim_margin_channels is not None
+        else int(shared.spectral_trim_margin_channels)
+    )
+    cube_hdr = None
+    if cube_path is not None and Path(cube_path).is_file():
+        cube_hdr = fits.getheader(cube_path)
+    if use_cube_trim and cube_hdr is not None and vel_all is not None:
+        spec = resolve_spectral_trim(
+            vel_all=np.asarray(vel_all, dtype=np.float64),
+            vsys_kms=v,
+            line_width_kms=lw,
+            vel_buffer_kms=buf,
+            cube_header=cube_hdr,
+            margin_channels=margin_ch,
+            use_imaging_cube=True,
+        )
+        return SpectralWindow(
+            vsys_kms=v,
+            line_width_kms=spec.line_width_kms,
+            vel_buffer_kms=spec.vel_buffer_kms,
+            v_lo_line=spec.v_lo_line,
+            v_hi_line=spec.v_hi_line,
+            v_lo_trim=spec.v_lo_trim,
+            v_hi_trim=spec.v_hi_trim,
+        )
     return SpectralWindow(vsys_kms=v, line_width_kms=lw, vel_buffer_kms=buf)
 
 
@@ -115,9 +163,13 @@ def load_and_aggregate_npz(
 
     u_m, v_m, vis, weights = cast_uv_arrays(u_m, v_m, vis, weights, "single")
     vel = C_KMS * (1.0 - freqs / float(f_rest_hz))
-    half = max(0.5 * window.line_width_kms, 0.5)
-    v_lo = window.vsys_kms - half - max(window.vel_buffer_kms, 0.0)
-    v_hi = window.vsys_kms + half + max(window.vel_buffer_kms, 0.0)
+    if window.v_lo_trim is not None and window.v_hi_trim is not None:
+        v_lo = float(window.v_lo_trim)
+        v_hi = float(window.v_hi_trim)
+    else:
+        half = max(0.5 * window.line_width_kms, 0.5)
+        v_lo = window.vsys_kms - half - max(window.vel_buffer_kms, 0.0)
+        v_hi = window.vsys_kms + half + max(window.vel_buffer_kms, 0.0)
     chan_mask = (vel >= v_lo) & (vel <= v_hi)
     if int(chan_mask.sum()) < 2:
         raise ValueError(
@@ -189,6 +241,8 @@ def run_visibility_audit(
         vsys_kms=w.vsys_kms,
         line_width_kms=w.line_width_kms,
         vel_buffer_kms=w.vel_buffer_kms,
+        v_lo_line=w.v_lo_line,
+        v_hi_line=w.v_hi_line,
         short_pct=short_pct,
         n_uv_bins=n_uv_bins,
     )

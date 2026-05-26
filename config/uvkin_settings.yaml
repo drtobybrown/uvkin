@@ -19,6 +19,8 @@ shared:
   f_rest_hz: 230538000000.0
   c_kms: 299792.458
   weight_scale_factor: 0.5   # Hanning smoothing covariance correction; 1.0 = no correction
+  spectral_trim_from_imaging_cube: true
+  spectral_trim_margin_channels: 3
 
 # -----------------------------------------------------------------------------
 # Galaxy catalogue (see catalogues/kgas007_066_catalogue.csv where noted).

@@ -62,6 +62,7 @@ from flux_audit_runner import (  # noqa: E402
     recommendation_run_metadata,
     resolve_spectral_window,
     run_visibility_audit,
+    velocity_axis_from_npz,
 )
 from visibility_audit import format_audit_log, format_recommendation_log  # noqa: E402
 
@@ -257,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     mom0_path = Path(args.mom0) if args.mom0 else None
     if cfg.imaging_products and cfg.imaging_products.mom0 and mom0_path is None:
         mom0_path = Path(cfg.imaging_products.mom0)
+    vel_all = velocity_axis_from_npz(args.data, f_rest_hz=f_rest_hz)
     window = resolve_spectral_window(
         cfg,
         shared,
@@ -265,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         vel_buffer_kms=args.vel_buffer_kms,
         line_width_from_imaging=bool(args.line_width_from_imaging),
         cube_path=cube_path,
+        vel_all=vel_all,
     )
     vsys = window.vsys_kms
     line_width_kms = window.line_width_kms
