@@ -13,9 +13,9 @@ from config_schema import AggregationConfig, GalaxyConfig, SharedConfig
 from imaging_preflight import flux_int_from_cube_k, flux_int_from_moment0_kkms
 from kgas_config import vmax_circ_from_obs_band
 from uv_aggregate import (
-    average_time_steps,
-    bin_channels,
-    bin_uv_plane,
+    AggregationConfig,
+    aggregate_visibilities,
+    aggregation_config_from_pipeline,
     cast_uv_arrays,
     extract_time_and_baseline,
 )
@@ -128,33 +128,31 @@ def load_and_aggregate_npz(
     weights_trim = weights[:, chan_mask]
     vel_trim = vel[chan_mask]
 
-    if apply_time_average and agg.apply_time_averaging:
-        if time_arr is None or baseline_arr is None:
-            pass
-        else:
-            u_m, v_m, vis_trim, weights_trim = average_time_steps(
-                u_m,
-                v_m,
-                vis_trim,
-                weights_trim,
-                time_arr,
-                agg.time_bin_s,
-                baseline_arr,
-            )
+    agg_cfg = aggregation_config_from_pipeline(agg)
+    time_ok = apply_time_average and agg_cfg.apply_time_averaging
+    if time_ok and (time_arr is None or baseline_arr is None):
+        time_ok = False
+    agg_cfg = AggregationConfig(
+        apply_time_averaging=time_ok,
+        time_bin_s=agg_cfg.time_bin_s,
+        apply_uv_binning=apply_uv_bin and agg_cfg.apply_uv_binning,
+        uv_bin_size_m=agg_cfg.uv_bin_size_m,
+        spectral_bin_factor=agg_cfg.spectral_bin_factor,
+    )
 
-    if apply_uv_bin and agg.apply_uv_binning:
-        u_m, v_m, vis_trim, weights_trim = bin_uv_plane(
-            u_m, v_m, vis_trim, weights_trim, agg.uv_bin_size_m
-        )
-
-    if agg.spectral_bin_factor > 1:
-        vis_trim, weights_trim, vel_trim, freqs_trim, _ = bin_channels(
+    u_m, v_m, vis_trim, weights_trim, freqs_trim, vel_trim, _meta = (
+        aggregate_visibilities(
+            u_m,
+            v_m,
             vis_trim,
             weights_trim,
-            vel_trim,
             freqs_trim,
-            agg.spectral_bin_factor,
+            config=agg_cfg,
+            vel=vel_trim,
+            time_s=time_arr,
+            baseline_ids=baseline_arr,
         )
+    )
 
     dv = (
         float(np.median(np.abs(np.diff(vel_trim))))
@@ -242,6 +240,7 @@ def build_flux_recommendation(
         model_integrated_jy_kms=model_integrated_jy_kms,
         flux_int_cube_jy_kms=flux_int_cube_jy_kms,
         catalog_jy_kms=catalog_jy_kms,
+        extrapolated_data_flux_jy_kms=audit.extrapolated_short_baseline_integrated_flux_jy_kms,
         flux_multipliers=flux_multipliers,
     )
 

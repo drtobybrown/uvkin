@@ -252,6 +252,44 @@ parser.add_argument(
         "given without VALUE). Overrides galaxies.<id>.fix_r_scale in YAML."
     ),
 )
+parser.add_argument(
+    "--aggregation-aware-likelihood",
+    dest="aggregation_aware_likelihood",
+    action="store_true",
+    default=None,
+    help=(
+        "Degrid on native (trimmed) channels, aggregate model vis like data, "
+        "then chi-squared (default: on)."
+    ),
+)
+parser.add_argument(
+    "--no-aggregation-aware-likelihood",
+    dest="aggregation_aware_likelihood",
+    action="store_false",
+    help="Legacy likelihood: degrid directly on binned uv grid.",
+)
+parser.add_argument(
+    "--observed-sb-from-mom0",
+    dest="observed_sb_from_mom0",
+    action="store_true",
+    default=None,
+    help="Use azimuthal mom0 SB profile instead of exp(-R/r_scale) for KinMS sbProf.",
+)
+parser.add_argument(
+    "--no-observed-sb-from-mom0",
+    dest="observed_sb_from_mom0",
+    action="store_false",
+    help="Exponential disk SB (default unless galaxy YAML sets observed_sb_from_mom0).",
+)
+parser.add_argument(
+    "--imaging-grid-kinematics",
+    choices=("imaging_seeds", "mcmc_map"),
+    default="imaging_seeds",
+    help=(
+        "Kinematics for bestfit_on_imaging_grid export: imaging_seeds keeps "
+        "DR1 vmax/r_scale/gas_sigma with MAP gamma only; mcmc_map uses full MAP."
+    ),
+)
 
 args = parser.parse_args()
 
@@ -294,6 +332,16 @@ if args.fix_r_scale is not None:
         _fix_r_scale_value = float(args.fix_r_scale)
 elif getattr(_cfg, "fix_r_scale", None) is not None:
     _fix_r_scale_value = float(_cfg.fix_r_scale)
+_agg_aware = (
+    args.aggregation_aware_likelihood
+    if args.aggregation_aware_likelihood is not None
+    else True
+)
+_obs_sb_from_mom0 = (
+    args.observed_sb_from_mom0
+    if args.observed_sb_from_mom0 is not None
+    else bool(getattr(_cfg, "observed_sb_from_mom0", False))
+)
 PA_INIT = _cfg.pa_init
 INC_INIT = _cfg.inc_init
 VSYS = args.vsys if args.vsys is not None else _cfg.vsys
@@ -364,12 +412,13 @@ from fit_bounds import (
 )
 from spectral_windows import build_velocity_windows, compute_line_channel_mask
 from uv_aggregate import (
-    average_time_steps,
-    bin_channels,
-    bin_uv_plane,
+    AggregationConfig,
+    aggregate_visibilities,
+    aggregation_config_from_pipeline,
     cast_uv_arrays,
     extract_time_and_baseline,
 )
+from aggregation_fitter import AggregationAwareFitter, NativeUVGrid
 from uvfit import UVDataset, Fitter
 
 from git_info import format_git_log_block, uvfit_git_revision, uvkin_git_revision
@@ -734,80 +783,72 @@ log.info(
     _centroid_seed[0], _centroid_seed[1],
 )
 
-# Step 2: Time averaging (optional)
-if AGGREGATION.apply_time_averaging:
-    if time_arr is None or baseline_arr is None:
-        log.warning(
-            "Time averaging enabled (%.1f s) but .npz has no usable time/baseline "
-            "keys; skipping.",
-            AGGREGATION.time_bin_s,
-        )
-    else:
-        _nrows_t0 = int(u_m_all.shape[0])
-        u_m_all, v_m_all, vis_trim, weights_trim = average_time_steps(
-            u_m_all,
-            v_m_all,
-            vis_trim,
-            weights_trim,
-            time_arr,
-            AGGREGATION.time_bin_s,
-            baseline_arr,
-        )
-        log.info(
-            "Time averaging (%.1f s bins): %d → %d rows",
-            AGGREGATION.time_bin_s,
-            _nrows_t0,
-            u_m_all.shape[0],
-        )
+_dv_native_steps = np.abs(np.diff(vel_trim))
+if _dv_native_steps.size > 0:
+    native_dv_kms = float(np.median(_dv_native_steps))
+else:
+    native_dv_kms = 1.0
+n_chan_native = int(vis_trim.shape[1])
 
-# Step 3: UV-binning in metres (output is also metres; no ref_nu round-trip)
-if AGGREGATION.apply_uv_binning:
-    _nrows_uv0 = int(u_m_all.shape[0])
-    u_m_all, v_m_all, vis_trim, weights_trim = bin_uv_plane(
+_native_grid = NativeUVGrid(
+    u_m=np.asarray(u_m_all),
+    v_m=np.asarray(v_m_all),
+    freqs_hz=np.asarray(freqs_trim, dtype=np.float64),
+    vel_kms=np.asarray(vel_trim, dtype=np.float64),
+    time_s=time_arr,
+    baseline_ids=baseline_arr,
+)
+
+_agg_cfg = aggregation_config_from_pipeline(AGGREGATION)
+if _agg_cfg.apply_time_averaging and (
+    time_arr is None or baseline_arr is None
+):
+    log.warning(
+        "Time averaging enabled (%.1f s) but .npz has no usable time/baseline "
+        "keys; skipping time step in aggregation.",
+        _agg_cfg.time_bin_s,
+    )
+    _agg_cfg = AggregationConfig(
+        apply_time_averaging=False,
+        time_bin_s=_agg_cfg.time_bin_s,
+        apply_uv_binning=_agg_cfg.apply_uv_binning,
+        uv_bin_size_m=_agg_cfg.uv_bin_size_m,
+        spectral_bin_factor=_agg_cfg.spectral_bin_factor,
+    )
+
+_nrows_pre = int(u_m_all.shape[0])
+_nchan_pre = int(vis_trim.shape[1])
+u_m_all, v_m_all, vis_trim, weights_trim, freqs_trim, vel_trim, _agg_meta = (
+    aggregate_visibilities(
         u_m_all,
         v_m_all,
         vis_trim,
         weights_trim,
-        AGGREGATION.uv_bin_size_m,
+        freqs_trim,
+        config=_agg_cfg,
+        vel=vel_trim,
+        time_s=time_arr,
+        baseline_ids=baseline_arr,
     )
-    log.info(
-        "UV binning (%.2f m cells): %d → %d rows (metres schema preserved)",
-        AGGREGATION.uv_bin_size_m,
-        _nrows_uv0,
-        u_m_all.shape[0],
-    )
-
-# Step 6: Spectral binning
-n_chan_pre_bin = int(vis_trim.shape[1])
-_spectral_bin = AGGREGATION.spectral_bin_factor
-if _spectral_bin > 1:
-    try:
-        vis_trim, weights_trim, vel_trim, freqs_trim, n_drop = bin_channels(
-            vis_trim,
-            weights_trim,
-            vel_trim,
-            freqs_trim,
-            _spectral_bin,
-        )
-    except ValueError as exc:
-        log.error("Spectral binning failed: %s", exc)
-        raise
-    if n_drop > 0:
-        log.warning(
-            "Spectral bin factor %d: dropped %d trailing channels "
-            "(%d -> %d)",
-            _spectral_bin,
-            n_drop,
-            n_chan_pre_bin,
-            vis_trim.shape[1],
-        )
-    log.info(
-        "Spectral bin factor %d: %d channels -> %d binned channels "
-        "(expect SNR ~ sqrt(%d) per channel)",
-        _spectral_bin,
-        n_chan_pre_bin,
-        vis_trim.shape[1],
-        _spectral_bin,
+)
+log.info(
+    "Aggregation: %d→%d rows, %d→%d ch (time=%s uv=%s spec=%s, dropped=%d ch)",
+    _agg_meta.n_row_in,
+    _agg_meta.n_row_out,
+    _agg_meta.n_chan_in,
+    _agg_meta.n_chan_out,
+    _agg_meta.time_averaging_applied,
+    _agg_meta.uv_binning_applied,
+    _agg_meta.spectral_binning_applied,
+    _agg_meta.n_spectral_dropped,
+)
+if _agg_meta.n_spectral_dropped > 0:
+    log.warning(
+        "Spectral bin factor %d: dropped %d trailing channels (%d -> %d)",
+        _agg_cfg.spectral_bin_factor,
+        _agg_meta.n_spectral_dropped,
+        _nchan_pre,
+        _agg_meta.n_chan_out,
     )
 
 _dv_steps = np.abs(np.diff(vel_trim))
@@ -821,8 +862,15 @@ else:
 n_chan_trim = int(vis_trim.shape[1])
 
 log.info(
-    "Trimmed to %d channels (%.0f – %.0f km/s), median dv=%.3f km/s (binned grid)",
-    n_chan_trim, vel_trim.min(), vel_trim.max(), current_dv_kms,
+    "Trimmed to %d native / %d binned channels (%.0f – %.0f km/s), "
+    "dv native=%.3f binned=%.3f km/s, aggregation-aware=%s",
+    n_chan_native,
+    n_chan_trim,
+    vel_trim.min(),
+    vel_trim.max(),
+    native_dv_kms,
+    current_dv_kms,
+    _agg_aware,
 )
 
 mcmc_flux_jy_kms = float(_cfg.flux_int_jy_kms)
@@ -1468,7 +1516,46 @@ log.info("=" * 60)
 # Model setup
 # ---------------------------------------------------------------------------
 radius = np.arange(0.01, 100, 0.1)
-sbprof = np.exp(-radius / R_SCALE)
+_mom0_sb_profile = None
+if _obs_sb_from_mom0 and _imaging_paths is not None and _imaging_paths.mom0.is_file():
+    from mom0_sb_profile import azimuthal_sb_profile_from_mom0
+
+    with fits.open(_imaging_paths.mom0) as _m0hd:
+        _m0_data = np.squeeze(np.asarray(_m0hd[0].data, dtype=np.float64))
+        _m0_hdr = _m0hd[0].header
+    _wcs_m0 = WCS(_m0_hdr).celestial
+    _pa_sb = (
+        _imaging_preflight_result.seeds.pa_deg
+        if _imaging_preflight_result is not None
+        and _imaging_preflight_result.seeds is not None
+        else PA_INIT
+    )
+    _mom0_sb_profile = azimuthal_sb_profile_from_mom0(
+        _m0_data, _wcs_m0, pa_deg=float(_pa_sb)
+    )
+    radius, sbprof = _mom0_sb_profile.sb_on_grid(radius)
+    outdir.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        outdir / "observed_sb_profile.npz",
+        radius_arcsec=radius,
+        sb_norm=sbprof,
+        r50_arcsec=_mom0_sb_profile.r50_arcsec,
+        pa_deg=_mom0_sb_profile.pa_deg,
+    )
+    log.info(
+        "Observed SB from mom0: r50=%.2f arcsec (%d pixels), saved observed_sb_profile.npz",
+        _mom0_sb_profile.r50_arcsec,
+        _mom0_sb_profile.n_pix,
+    )
+else:
+    sbprof = np.exp(-radius / R_SCALE)
+    if _obs_sb_from_mom0:
+        log.warning(
+            "--observed-sb-from-mom0 set but mom0 FITS unavailable; using exponential SB."
+        )
+
+_kinms_n_chan = n_chan_native if _agg_aware else n_chan_trim
+_kinms_dv_kms = native_dv_kms if _agg_aware else current_dv_kms
 
 model = BoundedGNFWKinMSModel(
     empirical_bounds=empirical_bounds,
@@ -1477,9 +1564,9 @@ model = BoundedGNFWKinMSModel(
     radius=radius,
     xs=NX,
     ys=NY,
-    vs=n_chan_trim,
+    vs=_kinms_n_chan,
     cell_size_arcsec=CELLSIZE,
-    channel_width_kms=current_dv_kms,
+    channel_width_kms=_kinms_dv_kms,
     sbprof=sbprof,
     sbrad=radius,
     precision=PRECISION,
@@ -1489,17 +1576,27 @@ log.info(
     "Weight scale factor (Hanning covariance correction): %.3f",
     _weight_scale,
 )
-fitter = Fitter(
-    uvdata=uvdata,
-    forward_model=model,
-    weight_scale_factor=_weight_scale,
-)
+if _agg_aware:
+    fitter = AggregationAwareFitter(
+        uvdata=uvdata,
+        forward_model=model,
+        native=_native_grid,
+        aggregation=_agg_cfg,
+        weight_scale_factor=_weight_scale,
+    )
+else:
+    fitter = Fitter(
+        uvdata=uvdata,
+        forward_model=model,
+        weight_scale_factor=_weight_scale,
+    )
 
 log.info(
-    "KinMS setup: dv=%.3f km/s  n_chan=%d  vSys=%.3f  intFlux_seed=%.6f Jy·km/s  "
+    "KinMS setup: dv=%.3f km/s  n_chan=%d (%s)  vSys=%.3f  intFlux_seed=%.6f Jy·km/s  "
     "r_scale_seed=%.3f arcsec  vmax_seed=%.3f km/s  gas_sigma_seed=%.3f km/s",
-    current_dv_kms,
-    n_chan_trim,
+    _kinms_dv_kms,
+    _kinms_n_chan,
+    "native+agg" if _agg_aware else "binned",
     VSYS,
     mcmc_flux_jy_kms,
     R_SCALE,
@@ -1747,6 +1844,10 @@ save_dict = dict(
     aggregation_time_bin_s=AGGREGATION.time_bin_s,
     aggregation_apply_uv_binning=AGGREGATION.apply_uv_binning,
     aggregation_apply_time_averaging=AGGREGATION.apply_time_averaging,
+    aggregation_aware_likelihood=_agg_aware,
+    observed_sb_from_mom0=_obs_sb_from_mom0,
+    kinms_n_chan_native=n_chan_native,
+    kinms_dv_native_kms=native_dv_kms,
     phase_centroid_seed_arcsec=np.asarray(_centroid_seed, dtype=np.float64),
     init_param_names=np.array(list(init_params_seed.keys())),
     init_param_values=np.array(list(init_params_seed.values())),
@@ -1810,17 +1911,43 @@ if (
         from kinms_grid import (
             load_observed_cube_for_plot as _load_obs,
             make_cube_gnfw,
+            map_params_for_imaging_export,
             moment_priors_for_map_on_imaging_grid,
+            rebin_cube_along_velocity,
             velocity_centers_from_cube_header,
         )
 
         _map_priors = moment_priors_for_map_on_imaging_grid(
             moment_priors_obj, result_mcmc.params
         )
+        _map_params_export = dict(result_mcmc.params)
+        if (
+            args.imaging_grid_kinematics == "imaging_seeds"
+            and _imaging_preflight_result is not None
+            and _imaging_preflight_result.seeds is not None
+        ):
+            _map_params_export = map_params_for_imaging_export(
+                result_mcmc.params,
+                imaging_seeds=_imaging_preflight_result.seeds,
+                kinematics="imaging_seeds",
+            )
+        _sb_map = sbprof if _mom0_sb_profile is not None else None
         _map_cube_imaging = make_cube_gnfw(
             _map_priors,
-            result_mcmc.params,
+            _map_params_export,
             cube_path=_imaging_paths.cube,
+            sb_profile=_sb_map,
+        )
+        _n_above = int(
+            np.sum(
+                np.max(_map_cube_imaging, axis=(0, 1))
+                > 0.1 * float(np.max(_map_cube_imaging))
+            )
+        )
+        log.info(
+            "Imaging-grid cube spectral occupancy: %d / %d channels above 10%% peak",
+            _n_above,
+            _map_cube_imaging.shape[2],
         )
         _imaging_grid_dir = outdir / "bestfit_on_imaging_grid"
         _imaging_grid_dir.mkdir(parents=True, exist_ok=True)
@@ -1874,6 +2001,34 @@ if (
         log.info("  FITS: %s", _map_fits)
         for _p in _map_pngs:
             log.info("  PNG: %s", _p)
+        if cube_fits_path.is_file():
+            _bf_hdr = fits.getheader(cube_fits_path)
+            _bf_data = np.squeeze(fits.getdata(cube_fits_path))
+            if _bf_data.ndim == 3 and _bf_data.shape[0] != _obs_xync.shape[0]:
+                _vel_bf = _vel_centers_bestfit
+                _vel_obs = velocity_centers_from_cube_header(_obs_hdr_map)
+                _bf_vyx = np.transpose(_bf_data, (2, 1, 0))
+                _bf_rebinned = rebin_cube_along_velocity(
+                    _bf_vyx, _vel_bf, _vel_obs
+                )
+                _bf_reb_k = cube_jy_beam_to_k(
+                    np.transpose(_bf_rebinned, (2, 1, 0)), _obs_hdr_map
+                )
+                _reb_pngs = save_cube_comparison_plots(
+                    obs_cube=_obs_xync,
+                    obs_header=_obs_hdr_map,
+                    sim_cube=_bf_reb_k,
+                    priors=_map_priors,
+                    plot_dir=_imaging_grid_dir,
+                    sim_bunit="K",
+                )
+                log.info(
+                    "Rebinned bestfit_cube (%d ch) → DR1 grid (%d ch) for comparison",
+                    _bf_vyx.shape[0],
+                    _bf_rebinned.shape[0],
+                )
+                for _p in _reb_pngs:
+                    log.info("  PNG: %s", _p)
         log.info("=" * 60)
     elif _do_preflight_cube:
         log.info(

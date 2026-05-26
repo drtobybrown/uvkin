@@ -58,6 +58,8 @@ class GalaxyConfig:
     fix_gamma: float | None = None
     # When set, freeze r_scale at this value in arcsec (e.g. imaging half-light radius).
     fix_r_scale: float | None = None
+    # Use mom0 azimuthal SB profile instead of exp(-r/r_scale) in gNFW KinMS.
+    observed_sb_from_mom0: bool = False
 
     @property
     def flux_int(self) -> float:

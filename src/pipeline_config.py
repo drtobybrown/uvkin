@@ -232,6 +232,8 @@ def _parse_galaxy(
     fix_gamma = None if fix_gamma_raw is None else float(fix_gamma_raw)
     fix_r_scale_raw = m.get("fix_r_scale", None)
     fix_r_scale = None if fix_r_scale_raw is None else float(fix_r_scale_raw)
+    obs_sb_raw = m.get("observed_sb_from_mom0", False)
+    observed_sb_from_mom0 = bool(obs_sb_raw)
 
     return GalaxyConfig(
         kilogas_archive_id=str(m["kilogas_archive_id"]),
@@ -255,6 +257,7 @@ def _parse_galaxy(
         freeze_imaging_geometry=freeze_imaging_geometry,
         fix_gamma=fix_gamma,
         fix_r_scale=fix_r_scale,
+        observed_sb_from_mom0=observed_sb_from_mom0,
     )
 
 

@@ -459,14 +459,16 @@ def build_moment_priors(
     )
 
 
-def make_cube_gnfw(
+def make_cube_gnfw_with_sb(
     priors: MomentPriors,
     map_params: dict[str, float],
     *,
+    sb_radius: np.ndarray,
+    sb_profile: np.ndarray,
     cube_path: Path | None = None,
-    radius_arcsec: np.ndarray | None = None,
+    vel_radius: np.ndarray | None = None,
 ) -> np.ndarray:
-    """KinMS gNFW disk cube on a :class:`MomentPriors` grid (``nx, ny, nchan``)."""
+    """KinMS gNFW cube with explicit ``sbProf`` / ``velProf`` radial profiles."""
     from kinms import KinMS
     from uvfit.forward_model import gnfw_circular_velocity
 
@@ -476,12 +478,13 @@ def make_cube_gnfw(
     flux = float(map_params["flux"])
     gas_sigma = float(map_params.get("gas_sigma", priors.gas_sigma_kms))
 
-    if radius_arcsec is None:
-        radius_arcsec = np.arange(0.01, 100.0, 0.1, dtype=np.float64)
+    sb_radius = np.asarray(sb_radius, dtype=np.float64)
+    sb_profile = np.asarray(sb_profile, dtype=np.float64)
+    if vel_radius is None:
+        vel_radius = sb_radius
     else:
-        radius_arcsec = np.asarray(radius_arcsec, dtype=np.float64)
-    sbprof = np.exp(-radius_arcsec / r_scale)
-    velprof = gnfw_circular_velocity(radius_arcsec, vmax, r_scale, gamma)
+        vel_radius = np.asarray(vel_radius, dtype=np.float64)
+    velprof = gnfw_circular_velocity(vel_radius, vmax, r_scale, gamma)
 
     bmaj, bmin = priors.beam_arcsec
     n_chan = int(round(priors.vsize_kms / priors.dv_kms))
@@ -492,10 +495,10 @@ def make_cube_gnfw(
         "posAng": priors.posang_deg,
         "gasSigma": gas_sigma,
         "intFlux": flux,
-        "sbProf": sbprof,
+        "sbProf": sb_profile,
         "velProf": velprof,
-        "sbRad": radius_arcsec,
-        "velRad": radius_arcsec,
+        "sbRad": sb_radius,
+        "velRad": vel_radius,
         "toplot": False,
         "fileName": "",
         "ra": priors.ra_deg,
@@ -515,6 +518,77 @@ def make_cube_gnfw(
         huge_beam=False,
         nSamps=1,
     ).model_cube(**mc_kwargs)
+
+
+def make_cube_gnfw(
+    priors: MomentPriors,
+    map_params: dict[str, float],
+    *,
+    cube_path: Path | None = None,
+    radius_arcsec: np.ndarray | None = None,
+    sb_profile: np.ndarray | None = None,
+) -> np.ndarray:
+    """KinMS gNFW disk cube on a :class:`MomentPriors` grid (``nx, ny, nchan``)."""
+    r_scale = float(map_params["r_scale"])
+    if radius_arcsec is None:
+        radius_arcsec = np.arange(0.01, 100.0, 0.1, dtype=np.float64)
+    else:
+        radius_arcsec = np.asarray(radius_arcsec, dtype=np.float64)
+    if sb_profile is None:
+        sb_profile = np.exp(-radius_arcsec / r_scale)
+    else:
+        sb_profile = np.asarray(sb_profile, dtype=np.float64)
+    return make_cube_gnfw_with_sb(
+        priors,
+        map_params,
+        sb_radius=radius_arcsec,
+        sb_profile=sb_profile,
+        cube_path=cube_path,
+        vel_radius=radius_arcsec,
+    )
+
+
+def map_params_for_imaging_export(
+    map_params: dict[str, float],
+    *,
+    imaging_seeds,
+    kinematics: str = "imaging_seeds",
+) -> dict[str, float]:
+    """
+    MAP parameters for DR1 imaging-grid QA cubes.
+
+    ``imaging_seeds``: use imaging vmax/r_scale/gas_sigma; keep MAP gamma (and flux).
+    ``mcmc_map``: use full MCMC MAP (legacy behaviour).
+    """
+    out = dict(map_params)
+    if kinematics != "imaging_seeds":
+        return out
+    out["vmax"] = float(imaging_seeds.vmax_kms)
+    out["r_scale"] = float(imaging_seeds.r_scale_arcsec)
+    out["gas_sigma"] = float(imaging_seeds.gas_sigma_kms)
+    return out
+
+
+def rebin_cube_along_velocity(
+    cube_vyx: np.ndarray,
+    vel_src_kms: np.ndarray,
+    vel_dst_kms: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate a (nchan, ny, nx) cube onto new velocity centres."""
+    cube = np.asarray(cube_vyx, dtype=np.float64)
+    v_src = np.asarray(vel_src_kms, dtype=np.float64).ravel()
+    v_dst = np.asarray(vel_dst_kms, dtype=np.float64).ravel()
+    if cube.ndim != 3:
+        raise ValueError(f"cube_vyx must be 3D (nchan, ny, nx); got {cube.shape}")
+    if v_src.shape[0] != cube.shape[0]:
+        raise ValueError("vel_src length must match cube nchan")
+    if v_dst.size == 0:
+        raise ValueError("vel_dst must be non-empty")
+    out = np.zeros((v_dst.size, cube.shape[1], cube.shape[2]), dtype=np.float64)
+    for iy in range(cube.shape[1]):
+        for ix in range(cube.shape[2]):
+            out[:, iy, ix] = np.interp(v_dst, v_src, cube[:, iy, ix], left=0.0, right=0.0)
+    return out
 
 
 def moment_priors_for_map_on_imaging_grid(

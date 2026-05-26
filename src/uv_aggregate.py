@@ -21,6 +21,7 @@ The pre-fit ``auto_centroid_visibilities`` routine has been removed —
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -291,6 +292,139 @@ def extract_time_and_baseline(
         bl = encode_baseline(npz["ant1"], npz["ant2"])
 
     return time_arr, bl
+
+
+@dataclass(frozen=True)
+class AggregationConfig:
+    """Flags matching ``run_kgas_full`` / ``flux_audit_runner`` aggregation order."""
+
+    apply_time_averaging: bool
+    time_bin_s: float
+    apply_uv_binning: bool
+    uv_bin_size_m: float
+    spectral_bin_factor: int
+
+
+@dataclass(frozen=True)
+class AggregationMetadata:
+    """Diagnostics from :func:`aggregate_visibilities`."""
+
+    n_row_in: int
+    n_row_out: int
+    n_chan_in: int
+    n_chan_out: int
+    n_spectral_dropped: int
+    time_averaging_applied: bool
+    uv_binning_applied: bool
+    spectral_binning_applied: bool
+
+
+def aggregation_config_from_pipeline(aggregation) -> AggregationConfig:
+    """Build config from :class:`config_schema.AggregationConfig`."""
+    return AggregationConfig(
+        apply_time_averaging=bool(aggregation.apply_time_averaging),
+        time_bin_s=float(aggregation.time_bin_s),
+        apply_uv_binning=bool(aggregation.apply_uv_binning),
+        uv_bin_size_m=float(aggregation.uv_bin_size_m),
+        spectral_bin_factor=int(aggregation.spectral_bin_factor),
+    )
+
+
+def aggregate_visibilities(
+    u_m: np.ndarray,
+    v_m: np.ndarray,
+    vis: np.ndarray,
+    weights: np.ndarray,
+    freqs: np.ndarray,
+    *,
+    config: AggregationConfig,
+    vel: np.ndarray | None = None,
+    time_s: np.ndarray | None = None,
+    baseline_ids: np.ndarray | None = None,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray | None,
+    AggregationMetadata,
+]:
+    """Apply time → UV → spectral binning (same order as ``run_kgas_full``).
+
+    Parameters
+    ----------
+    vel
+        Per-channel velocity (km/s); required when ``spectral_bin_factor > 1``.
+        Returned updated after spectral binning.
+
+    Returns
+    -------
+    u_m, v_m, vis, weights, freqs, metadata
+    """
+    u_out = np.asarray(u_m)
+    v_out = np.asarray(v_m)
+    vis_out = np.asarray(vis)
+    w_out = np.asarray(weights)
+    freqs_out = np.asarray(freqs, dtype=np.float64).ravel()
+    n_row_in = int(vis_out.shape[0])
+    n_chan_in = int(vis_out.shape[1])
+    time_applied = False
+    uv_applied = False
+    spec_applied = False
+    n_drop = 0
+
+    if config.apply_time_averaging:
+        if time_s is None or baseline_ids is None:
+            raise ValueError(
+                "time_s and baseline_ids required when apply_time_averaging is True"
+            )
+        u_out, v_out, vis_out, w_out = average_time_steps(
+            u_out,
+            v_out,
+            vis_out,
+            w_out,
+            time_s,
+            config.time_bin_s,
+            baseline_ids,
+        )
+        time_applied = True
+
+    if config.apply_uv_binning:
+        u_out, v_out, vis_out, w_out = bin_uv_plane(
+            u_out, v_out, vis_out, w_out, config.uv_bin_size_m
+        )
+        uv_applied = True
+
+    if vel is None:
+        vel_out = None
+    else:
+        vel_out = np.asarray(vel, dtype=np.float64).ravel()
+        if vel_out.shape[0] != n_chan_in:
+            raise ValueError("vel length must match input n_chan")
+
+    sbin = int(config.spectral_bin_factor)
+    if sbin > 1:
+        if vel_out is None:
+            raise ValueError("vel required when spectral_bin_factor > 1")
+        vis_out, w_out, vel_out, freqs_out, n_drop = bin_channels(
+            vis_out, w_out, vel_out, freqs_out, sbin
+        )
+        spec_applied = True
+    elif vel_out is not None and vel_out.shape[0] != freqs_out.shape[0]:
+        raise ValueError("vel and freqs length mismatch")
+
+    meta = AggregationMetadata(
+        n_row_in=n_row_in,
+        n_row_out=int(vis_out.shape[0]),
+        n_chan_in=n_chan_in,
+        n_chan_out=int(vis_out.shape[1]),
+        n_spectral_dropped=n_drop,
+        time_averaging_applied=time_applied,
+        uv_binning_applied=uv_applied,
+        spectral_binning_applied=spec_applied,
+    )
+    return u_out, v_out, vis_out, w_out, freqs_out, vel_out, meta
 
 
 def cast_uv_arrays(

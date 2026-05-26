@@ -114,6 +114,24 @@ def default_experiments() -> tuple[ScienceExperiment, ...]:
         "C_fix_r_scale",
         desc="5 km/s, r_scale at imaging seed fixed, vis-aligned flux",
     )
+    add(
+        "5kms_aggAware_vis",
+        "5kms",
+        cfg_5,
+        "auto",
+        "A_free",
+        ("--aggregation-aware-likelihood",),
+        desc="5 km/s, aggregation-aware likelihood (explicit flag)",
+    )
+    add(
+        "5kms_obsSb_aggAware",
+        "5kms",
+        cfg_5,
+        "auto",
+        "A_free",
+        ("--aggregation-aware-likelihood", "--observed-sb-from-mom0"),
+        desc="5 km/s, mom0 SB profile + aggregation-aware likelihood",
+    )
     # 30 km/s spectral match
     add(
         "30kms_A_vis",

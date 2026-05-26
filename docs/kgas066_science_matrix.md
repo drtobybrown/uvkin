@@ -4,20 +4,24 @@ Targeted experiments to separate **flux calibration**, **gamma/r_scale prior wal
 
 ## Experiment design
 
-Eight orthogonal runs (one factor changed from baseline `5kms_A_vis`):
+Ten runs (baseline plus aggregation / SB variants):
 
-| ID | Δv (vis) | Flux anchor | Shape handling |
-|----|----------|-------------|----------------|
-| `5kms_A_vis` | ~5 km/s | `auto` (visibility audit) | free γ, r_scale |
+| ID | Δv (vis) | Flux anchor | Shape / likelihood |
+|----|----------|-------------|-------------------|
+| `5kms_A_vis` | ~5 km/s | `auto` (visibility audit) | free γ, r_scale; agg-aware (default) |
 | `5kms_A_mom0` | ~5 km/s | `mom0` | free |
 | `5kms_B_fixgamma_vis` | ~5 km/s | `auto` | `--fix-gamma 1.0` |
 | `5kms_C_fixrscale_vis` | ~5 km/s | `auto` | `--fix-r-scale` (imaging seed) |
+| `5kms_aggAware_vis` | ~5 km/s | `auto` | explicit `--aggregation-aware-likelihood` |
+| `5kms_obsSb_aggAware` | ~5 km/s | `auto` | mom0 SB + agg-aware |
 | `30kms_A_vis` | ~30 km/s | `auto` | free |
 | `30kms_A_mom0` | ~30 km/s | `mom0` | free |
 | `30kms_B_fixgamma_vis` | ~30 km/s | `auto` | γ=1 fixed |
 | `30kms_C_fixrscale_vis` | ~30 km/s | `auto` | r_scale fixed |
 
-All runs: frozen imaging geometry (PA, inc, vsys, dx, dy), inClouds preflight on DR1 30 km/s cubes, imaging-grid MAP comparison products.
+All runs: frozen imaging geometry (PA, inc, vsys, dx, dy), inClouds preflight on DR1 30 km/s cubes. Imaging-grid export uses imaging vmax/r_scale/gas_sigma with MAP γ only (`--imaging-grid-kinematics imaging_seeds`, default). Legacy full-MAP cubes: `--imaging-grid-kinematics mcmc_map`.
+
+**Aggregation-aware likelihood (default):** KinMS cubes use native channel width/count; model visibilities are degridded then passed through the same `aggregate_visibilities` pipeline as the data before χ². Disable with `--no-aggregation-aware-likelihood`.
 
 ## Workflow
 

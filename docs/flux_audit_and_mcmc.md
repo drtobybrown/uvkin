@@ -210,6 +210,7 @@ Example fields (KGAS066 baseline):
 When `mom0 / data > 2` (default threshold):
 
 - **Seed** = `0.5 × (data + model)` if model is available, else `data`
+- For resolved sources, **data** may use the short-baseline flux extrapolated to uv=0 (`extrapolated_short_baseline_integrated_flux_jy_kms`) instead of the flat short-B mean.
 - **Bounds** = `(max(0.25×data, 5), max(4×model, 4×seed))` unless YAML/CLI override
 
 Otherwise:

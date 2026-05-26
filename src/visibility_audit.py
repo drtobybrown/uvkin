@@ -62,6 +62,7 @@ class AuditResult:
     per_channel_mean_amp_jy: np.ndarray
     per_channel_mean_amp_short_jy: np.ndarray
     short_baseline_integrated_flux_jy_kms: float
+    extrapolated_short_baseline_integrated_flux_jy_kms: float
     off_line_continuum_jy: float
     line_to_offline_ratio: float
     uv_bin_centers_m: np.ndarray
@@ -190,6 +191,55 @@ def shortest_baseline_integrated_flux_jy_kms(
         return 0.0, 0, threshold
     amp_short = weighted_mean_amplitude_per_channel(vis[mask], weights[mask])
     flux = float(np.sum(amp_short[line_idx]) * float(dv_kms))
+    return flux, n_short, threshold
+
+
+def extrapolated_short_baseline_integrated_flux_jy_kms(
+    *,
+    u_m: np.ndarray,
+    v_m: np.ndarray,
+    vis: np.ndarray,
+    weights: np.ndarray,
+    line_idx: np.ndarray,
+    dv_kms: float,
+    pct: float = 5.0,
+) -> tuple[float, int, float]:
+    """Integrated flux (Jy·km/s) from extrapolating |V|(uv)→0 on short baselines.
+
+    Per line channel, fits ``|V|`` vs UV distance on the shortest ``pct`` %
+    of rows and evaluates the intercept at uv=0.
+    """
+    if float(dv_kms) <= 0.0:
+        raise ValueError(f"dv_kms must be positive; got {dv_kms}")
+    line_idx = np.asarray(line_idx, dtype=bool).ravel()
+    mask, threshold = _short_baseline_mask(u_m, v_m, pct)
+    n_short = int(np.sum(mask))
+    if n_short < 3:
+        flux, _, thr = shortest_baseline_integrated_flux_jy_kms(
+            u_m=u_m,
+            v_m=v_m,
+            vis=vis,
+            weights=weights,
+            line_idx=line_idx,
+            dv_kms=dv_kms,
+            pct=pct,
+        )
+        return flux, n_short, thr
+
+    uv = np.hypot(
+        np.asarray(u_m[mask], dtype=np.float64),
+        np.asarray(v_m[mask], dtype=np.float64),
+    )
+    vis_s = np.asarray(vis[mask])
+    flux = 0.0
+    for ic in np.where(line_idx)[0]:
+        amp = np.abs(vis_s[:, ic]).astype(np.float64)
+        if amp.size >= 2:
+            coef = np.polyfit(uv, amp, 1)
+            v0 = max(float(coef[1]), 0.0)
+        else:
+            v0 = float(np.max(amp)) if amp.size else 0.0
+        flux += v0 * float(dv_kms)
     return flux, n_short, threshold
 
 
@@ -341,6 +391,15 @@ def audit_visibilities(
         vis[mask_short], weights[mask_short]
     )
     flux_jy_kms = float(np.sum(per_chan_mean_short[line_idx]) * dv_kms)
+    flux_extrap_jy_kms, _, _ = extrapolated_short_baseline_integrated_flux_jy_kms(
+        u_m=u_m,
+        v_m=v_m,
+        vis=vis,
+        weights=weights,
+        line_idx=line_idx,
+        dv_kms=dv_kms,
+        pct=short_pct,
+    )
     cont_jy = float(np.median(per_chan_mean_short[off_idx]))
     line_mean = float(np.mean(per_chan_mean_short[line_idx]))
     off_mean = float(np.mean(per_chan_mean_short[off_idx]))
@@ -374,6 +433,7 @@ def audit_visibilities(
         per_channel_mean_amp_jy=per_chan_mean,
         per_channel_mean_amp_short_jy=per_chan_mean_short,
         short_baseline_integrated_flux_jy_kms=flux_jy_kms,
+        extrapolated_short_baseline_integrated_flux_jy_kms=flux_extrap_jy_kms,
         off_line_continuum_jy=cont_jy,
         line_to_offline_ratio=line_to_off,
         uv_bin_centers_m=profile["bin_centers_m"],
@@ -405,6 +465,10 @@ def format_audit_log(result: AuditResult) -> str:
         (
             "  shortest-baseline integrated line flux : "
             f"{result.short_baseline_integrated_flux_jy_kms:.4f} Jy·km/s"
+        ),
+        (
+            "  extrapolated (uv→0) line flux        : "
+            f"{result.extrapolated_short_baseline_integrated_flux_jy_kms:.4f} Jy·km/s"
         ),
         f"  off-line continuum |V|       : {result.off_line_continuum_jy:.6f} Jy",
         f"  line / off-line |V| ratio   : {result.line_to_offline_ratio:.3f}",
@@ -480,6 +544,8 @@ def recommend_mcmc_flux(
     model_integrated_jy_kms: float | None = None,
     flux_int_cube_jy_kms: float | None = None,
     catalog_jy_kms: float | None = None,
+    aggregation_aware_model_flux_jy_kms: float | None = None,
+    extrapolated_data_flux_jy_kms: float | None = None,
     flux_multipliers: tuple[float, float] = (0.5, 2.0),
     mismatch_ratio_threshold: float = 2.0,
 ) -> AuditRecommendation:
@@ -503,20 +569,32 @@ def recommend_mcmc_flux(
         if model_integrated_jy_kms is not None
         else None
     )
+    if aggregation_aware_model_flux_jy_kms is not None and aggregation_aware_model_flux_jy_kms > 0.0:
+        model = float(aggregation_aware_model_flux_jy_kms)
+    data_for_seed = float(data_integrated_jy_kms)
+    if extrapolated_data_flux_jy_kms is not None and extrapolated_data_flux_jy_kms > 0.0:
+        data_for_seed = float(extrapolated_data_flux_jy_kms)
 
     if ratio is not None and ratio > float(mismatch_ratio_threshold):
         if model is not None:
-            seed = 0.5 * (data + model)
-            lo = max(0.25 * data, 5.0)
+            seed = 0.5 * (data_for_seed + model)
+            lo = max(0.25 * data_for_seed, 5.0)
             hi = max(4.0 * model, 4.0 * seed)
         else:
-            seed = data
-            lo = max(0.25 * data, 5.0)
+            seed = data_for_seed
+            lo = max(0.25 * data_for_seed, 5.0)
             hi = 4.0 * seed
         notes = (
             f"mom0/data={ratio:.2f} > {mismatch_ratio_threshold}; "
-            "MCMC flux aligned to visibility audit (mom0 retained for imaging preflight only)."
+            "MCMC flux aligned to visibility-side estimators (mom0 retained for imaging preflight only)."
         )
+        if extrapolated_data_flux_jy_kms is not None:
+            notes += f" Short-B flux extrapolated to uv=0: {extrapolated_data_flux_jy_kms:.1f} Jy·km/s."
+        if aggregation_aware_model_flux_jy_kms is not None:
+            notes += (
+                f" Aggregation-aware model flux at seeds: "
+                f"{aggregation_aware_model_flux_jy_kms:.1f} Jy·km/s."
+            )
         return AuditRecommendation(
             flux_seed_jy_kms=float(seed),
             flux_bounds_jy_kms=(float(lo), float(hi)),
