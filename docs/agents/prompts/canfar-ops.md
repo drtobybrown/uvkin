@@ -98,6 +98,18 @@ results/KILOGAS066/science_matrix/<experiment_id>/
 - `subagent_type`: `shell`
 - `best-of-n-runner` for parallel isolated submit strategies if requested
 
+## Definition of Done (autonomous loop)
+
+After each job batch, evaluate `docs/agents/definition-of-done.md`:
+
+1. **Tier 1** — pipeline valid (converged, agg-aware, no catastrophic walls)
+2. **Tier 2** — dataset similarity (`rchi2_MAP`, preflight xcorr, imaging-grid mom0 corr)
+3. **Tier 3** — science (`γ_MAP ≤ 0.5`, beat `fixgamma` arm, flux/spectral robustness)
+
+Stop when `overall = science_done` or `falsified`. Write `SCIENCE_STATUS.json` per
+experiment directory.
+
 ## Full roster
 
-See uvkin: `docs/agents/README.md` and `docs/agents/kgas066-science-matrix-playbook.md`
+See uvkin: `docs/agents/README.md`, `docs/agents/definition-of-done.md`, and
+`docs/agents/kgas066-science-matrix-playbook.md`
