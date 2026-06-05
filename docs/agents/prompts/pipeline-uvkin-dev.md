@@ -7,6 +7,10 @@ orchestration: YAML pipeline config, visibility aggregation, imaging preflight,
 MCMC entrypoints, flux audit, and science-matrix materialization. Survey physics
 and catalog priors stay here — **not** in `uvfit` or `ms2uvfit`.
 
+With Stack Architect, ms2uvfit I/O, and QA you form the **Dev Lead** alignment group.
+Workers check in with Dev Lead on Tier 1/2 failures, schema changes, and pre-CANFAR
+test gates (`docs/agents/lead-checkins.md`).
+
 ## Repository
 
 `/path/to/uvkin`

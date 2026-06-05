@@ -368,6 +368,55 @@ def evaluate_falsified(
     return float(fix_r) < float(free_r) * (1.0 - th.fixgamma_rchi2_margin)
 
 
+def required_checkins(
+    *,
+    tier1: TierResult,
+    tier2: TierResult,
+    tier3: TierResult,
+    overall: OverallStatus,
+    falsified: bool,
+) -> dict[str, Any]:
+    """Leads that must be consulted before executing next_action."""
+    leads: list[str] = []
+    reasons: list[str] = []
+
+    if overall == "science_done" or falsified:
+        return {
+            "required": ["science_lead", "dev_lead", "ops_lead"],
+            "reason": "Campaign exit — science_done or falsified requires full lead sign-off",
+            "blocked_until_recorded": True,
+        }
+
+    if not tier1.passed:
+        leads.extend(["dev_lead", "ops_lead"])
+        reasons.append(f"Tier 1 pipeline: {tier1.failed}")
+    if not tier2.passed:
+        leads.extend(["science_lead", "dev_lead"])
+        reasons.append(f"Tier 2 dataset similarity: {tier2.failed}")
+    if not tier3.passed:
+        if "science_lead" not in leads:
+            leads.append("science_lead")
+        reasons.append(f"Tier 3 science: {tier3.failed}")
+
+    if not leads:
+        leads = ["ops_lead"]
+        reasons.append("Iterate cycle — confirm batch plan with Ops Lead")
+
+    # De-duplicate preserving order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for lead in leads:
+        if lead not in seen:
+            seen.add(lead)
+            ordered.append(lead)
+
+    return {
+        "required": ordered,
+        "reason": "; ".join(reasons),
+        "blocked_until_recorded": True,
+    }
+
+
 def suggest_next_action(
     *,
     tier1: TierResult,
@@ -468,6 +517,14 @@ def build_science_status(
         "n_chain_steps": metrics.get("n_chain_steps"),
     }
 
+    checkins = required_checkins(
+        tier1=tier1,
+        tier2=tier2,
+        tier3=tier3,
+        overall=overall,
+        falsified=falsified,
+    )
+
     return {
         "experiment_id": experiment_id,
         "tier1_pipeline": _tier_dict(tier1),
@@ -475,6 +532,7 @@ def build_science_status(
         "tier3_science": _tier_dict(tier3),
         "falsified": falsified,
         "overall": overall,
+        "checkins": checkins,
         "metrics": summary_metrics,
         "next_action": suggest_next_action(
             tier1=tier1,

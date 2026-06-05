@@ -189,6 +189,11 @@ Agents write after each long-chain candidate:
   "tier3_science": { "pass": false, "failed": ["S1", "S3"] },
   "falsified": false,
   "overall": "iterate",
+  "checkins": {
+    "required": ["science_lead", "dev_lead"],
+    "reason": "Tier 2 dataset similarity: [\"I3\"]; Tier 3 science: [\"S1\", \"S3\"]",
+    "blocked_until_recorded": true
+  },
   "metrics": {
     "rchi2_map": 1.05,
     "imaging_grid_mom0_corr": 0.48,
@@ -203,6 +208,18 @@ Agents write after each long-chain candidate:
 ```
 
 `overall` ∈ `iterate` | `science_done` | `falsified` | `blocked`
+
+When `checkins.blocked_until_recorded` is true, workers **must** record a lead
+check-in before executing `next_action`:
+
+```bash
+python3 scripts/record_agent_checkin.py \
+  --campaign KILOGAS066 --worker canfar-ops --leads science,dev \
+  --summary "Tier 3 fail — requesting γ guidance" \
+  --science-status results/.../SCIENCE_STATUS.json
+```
+
+See [lead-checkins.md](lead-checkins.md) for cadence and mandatory gates.
 
 ---
 
@@ -259,4 +276,5 @@ in the KILOGAS batch list, not only KGAS066.
 - [science-hypothesis.md](science-hypothesis.md)
 - [kgas066-science-matrix-playbook.md](kgas066-science-matrix-playbook.md)
 - [handoff-checklists.md](handoff-checklists.md)
+- [lead-checkins.md](lead-checkins.md)
 - [prompts/canfar-ops.md](prompts/canfar-ops.md)

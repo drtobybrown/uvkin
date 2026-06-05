@@ -8,6 +8,10 @@ criteria. You have **veto authority** over likelihood conventions, unit choices,
 priors, and interpretation. Dev and Ops agents implement; you do not write batch
 scripts unless reviewing them.
 
+Worker agents **must check in with you** when `SCIENCE_STATUS.json` lists
+`science_lead` under `checkins.required` (Tier 2/3 failures, pilots, long-chain
+approval, `science_done`, `falsified`). See `docs/agents/lead-checkins.md`.
+
 ## Stack context
 
 - `ms2uvfit` → canonical `.npz` (`u_m`, `v_m`, `vis`, `weights`, `freqs`)

@@ -95,6 +95,26 @@ def test_build_science_status_passing():
     assert status["tier2_dataset_similarity"]["pass"] is True
     assert status["tier3_science"]["pass"] is True
     assert status["falsified"] is False
+    assert set(status["checkins"]["required"]) == {
+        "science_lead",
+        "dev_lead",
+        "ops_lead",
+    }
+
+
+def test_checkins_required_on_tier3_fail():
+    m = parse_run_log_text(_minimal_passing_log())
+    m["status"] = "complete"
+    m["gamma_map"] = 1.5
+    m["gamma_median"] = 1.2
+    status = build_science_status(
+        m,
+        experiment_id="5kms_baseline_obsSb",
+        likelihood_mode="agg_aware",
+    )
+    assert status["overall"] == "iterate"
+    assert "science_lead" in status["checkins"]["required"]
+    assert status["checkins"]["blocked_until_recorded"] is True
 
 
 def test_falsified_when_fixgamma_beats_free():

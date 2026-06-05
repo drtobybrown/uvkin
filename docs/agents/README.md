@@ -25,6 +25,7 @@ falsification criteria.
 | 5 | **CANFAR Ops** | uvkin scripts | [prompts/canfar-ops.md](prompts/canfar-ops.md) |
 | 6 | **Validation & QA** | uvkin tests | [prompts/validation-qa.md](prompts/validation-qa.md) |
 | 7 | **Inference & Identifiability** (optional) | uvkin science matrix | [prompts/inference-identifiability.md](prompts/inference-identifiability.md) |
+| — | **Worker agents** (any executor) | all | [prompts/worker-agent.md](prompts/worker-agent.md) |
 
 **Authority model**
 
@@ -38,6 +39,8 @@ falsification criteria.
 
 ## Handoffs and playbooks
 
+- [lead-checkins.md](lead-checkins.md) — **cadence and gates** for Science / Dev / Ops
+  lead alignment (required before `next_action`)
 - [handoff-checklists.md](handoff-checklists.md) — stage gates between agents
 - [definition-of-done.md](definition-of-done.md) — **CANFAR autonomous exit criteria**
   (pipeline validity, dataset similarity, cored-γ science gates)
@@ -73,3 +76,5 @@ falsification criteria.
 4. **Validation & QA** — `scripts/run_local_tests.sh` (+ flux audit if flux anchor changes).
 5. **CANFAR Ops** — pilot (`--pilot --core`) then long chains for top IDs.
 6. **Science Lead** — sign off on γ posterior, walls, τ, imaging-grid mom0 corr.
+7. **All workers** — record lead check-in (`record_agent_checkin.py`) when
+   `SCIENCE_STATUS.json` → `checkins.blocked_until_recorded` is true.

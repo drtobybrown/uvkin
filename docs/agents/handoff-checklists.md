@@ -3,6 +3,23 @@
 Copy the relevant checklist into the agent session when handing off work. Each item
 must be explicitly checked or marked N/A with a one-line reason.
 
+**Lead alignment:** workers must also follow [lead-checkins.md](lead-checkins.md) and
+record check-ins when `SCIENCE_STATUS.json` → `checkins.blocked_until_recorded` is true.
+
+---
+
+## Recurring: Worker → Leads (every iterate cycle)
+
+**Trigger:** `evaluate_science_status.py` produced `overall: iterate` (or any exit state).
+
+| # | Item | Owner |
+|---|------|-------|
+| 1 | Read `checkins.required` from `SCIENCE_STATUS.json` | Worker |
+| 2 | Consult each listed lead (Science / Dev / Ops prompts) | Worker |
+| 3 | Append `record_agent_checkin.py` or `CHECKIN_LOG.md` entry | Worker |
+| 4 | Lead decisions documented before new CANFAR submit or code change | Leads |
+| 5 | `next_action` executed only after step 4 | Worker |
+
 ---
 
 ## H0 → H1: Science Lead → Pipeline Dev
