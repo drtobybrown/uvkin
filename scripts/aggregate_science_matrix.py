@@ -120,6 +120,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="RESULTS_DIR",
         help="Additional result dirs to score (e.g. baseline diagnose_5kms_frozen run)",
     )
+    p.add_argument(
+        "--evaluate-dod",
+        action="store_true",
+        help="After scoreboard, run evaluate_science_status.py --matrix-root (writes SCIENCE_STATUS.json)",
+    )
     args = p.parse_args(argv)
     rows, summary = aggregate(args.matrix_root)
     for extra in args.also_scan:
@@ -152,6 +157,23 @@ def main(argv: list[str] | None = None) -> int:
     csv_p, md_p = write_scoreboard(args.matrix_root, rows, summary)
     print(f"Wrote {csv_p}")
     print(f"Wrote {md_p}")
+    if args.evaluate_dod:
+        import subprocess
+
+        ev = ROOT / "scripts" / "evaluate_science_status.py"
+        print(f"Evaluating DoD via {ev} ...", flush=True)
+        rc = subprocess.call(
+            [
+                sys.executable,
+                str(ev),
+                "--matrix-root",
+                str(args.matrix_root),
+                "--scoreboard",
+                str(csv_p),
+            ],
+        )
+        if rc != 0:
+            return rc
     return 0
 
 

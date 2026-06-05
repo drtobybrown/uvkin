@@ -41,6 +41,7 @@ falsification criteria.
 - [handoff-checklists.md](handoff-checklists.md) — stage gates between agents
 - [definition-of-done.md](definition-of-done.md) — **CANFAR autonomous exit criteria**
   (pipeline validity, dataset similarity, cored-γ science gates)
+- `scripts/evaluate_science_status.py` — emits `SCIENCE_STATUS.json` from `run.log`
 - [kgas066-science-matrix-playbook.md](kgas066-science-matrix-playbook.md) — KGAS066
   experiments keyed to existing YAML profiles and `science_matrix.py`
 

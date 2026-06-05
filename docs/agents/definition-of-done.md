@@ -37,8 +37,22 @@ Automated check (after each job):
 ```bash
 python3 scripts/aggregate_science_matrix.py \
   --matrix-root science_matrix/KGAS066 \
-  --also-scan ${ARC_BASE}/results/KILOGAS066
+  --also-scan ${ARC_BASE}/results/KILOGAS066 \
+  --evaluate-dod
 ```
+
+Or evaluate a single run:
+
+```bash
+python3 scripts/evaluate_science_status.py \
+  --run-dir ${ARC_BASE}/results/KILOGAS066/science_matrix/5kms_baseline_obsSb \
+  --experiment-id 5kms_baseline_obsSb \
+  --scoreboard science_matrix/KGAS066/scoreboard.csv \
+  --companion-run-dir ${ARC_BASE}/results/KILOGAS066/science_matrix/30kms_baseline_obsSb \
+  --fixgamma-run-dir ${ARC_BASE}/results/KILOGAS066/science_matrix/5kms_baseline_fixgamma
+```
+
+Writes `SCIENCE_STATUS.json` (and `SCIENCE_DONE.json` when `overall=science_done`).
 
 ---
 

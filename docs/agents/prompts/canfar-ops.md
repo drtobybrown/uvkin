@@ -100,14 +100,20 @@ results/KILOGAS066/science_matrix/<experiment_id>/
 
 ## Definition of Done (autonomous loop)
 
-After each job batch, evaluate `docs/agents/definition-of-done.md`:
+After each job batch:
 
-1. **Tier 1** — pipeline valid (converged, agg-aware, no catastrophic walls)
-2. **Tier 2** — dataset similarity (`rchi2_MAP`, preflight xcorr, imaging-grid mom0 corr)
-3. **Tier 3** — science (`γ_MAP ≤ 0.5`, beat `fixgamma` arm, flux/spectral robustness)
+```bash
+python3 scripts/aggregate_science_matrix.py \
+  --matrix-root science_matrix/KGAS066 \
+  --also-scan ${RESULTS_BASE}/KILOGAS066 \
+  --evaluate-dod
+```
 
-Stop when `overall = science_done` or `falsified`. Write `SCIENCE_STATUS.json` per
-experiment directory.
+Or per run: `python3 scripts/evaluate_science_status.py --run-dir ...`
+
+Reads `docs/agents/definition-of-done.md` gates; writes `SCIENCE_STATUS.json` per
+experiment (`SCIENCE_DONE.json` on success). Stop when `overall` is `science_done`
+or `falsified`; follow `next_action` in the JSON when `iterate`.
 
 ## Full roster
 
