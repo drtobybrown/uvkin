@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 gNFW kinematic fitting — production script.
 
@@ -81,6 +82,10 @@ parser.add_argument(
 parser.add_argument(
     "--line-width-kms", type=float, default=None,
     help="Full width of line mask (km/s), centered on --vsys; default is 2×--vmax",
+)
+parser.add_argument(
+    "--vel-buffer-kms", type=float, default=None,
+    help="Velocity buffer (km/s) added to each side of the line mask; default: config vel_buffer_kms",
 )
 parser.add_argument(
     "--no-preflight-plots",
@@ -481,6 +486,7 @@ from mcmc_diagnostics import (
 )
 from flux_audit_runner import (
     AggregatedVis,
+    SpectralWindow,
     run_flux_audit_for_mcmc,
 )
 from visibility_audit import format_recommendation_log
