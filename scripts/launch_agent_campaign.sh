@@ -62,6 +62,20 @@ Stop on overall=science_done or falsified.
 
 $(cat "${PROMPTS}/inference-identifiability.md")"
 
+_run_agent_cmd() {
+    local prompt_file="$1"
+    local extra="$2"
+    local mode_flag="${3:-}"
+    # shellcheck disable=SC2016
+    if [[ -n "${mode_flag}" ]]; then
+        printf 'cd %q && agent --model %q %s "$(cat %q)\n\n%s\n\n%s"' \
+            "${UVKIN_DIR}" "${MODEL}" "${mode_flag}" "${prompt_file}" "${COMMON_CTX}" "${extra}"
+    else
+        printf 'cd %q && agent --model %q "$(cat %q)\n\n%s\n\n%s"' \
+            "${UVKIN_DIR}" "${MODEL}" "${prompt_file}" "${COMMON_CTX}" "${extra}"
+    fi
+}
+
 OPS_CMD="$(_run_agent_cmd "${PROMPTS}/canfar-ops.md" "${ops_extra}")"
 SCIENCE_CMD="$(_run_agent_cmd "${PROMPTS}/science-visibility-lead.md" "${science_extra}" "--mode ask")"
 DEV_CMD="$(_run_agent_cmd "${PROMPTS}/pipeline-uvkin-dev.md" "${dev_extra}")"
