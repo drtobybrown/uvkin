@@ -2,6 +2,13 @@
 
 Visibility-space kinematic fitting for the KILOGAS survey using [UVfit](https://github.com/drtobybrown/uvfit) and [KinMS](https://github.com/TimothyADavis/KinMSpy).
 
+## Multi-agent roster (CANFAR / visibility fitting)
+
+Prompt templates, handoff checklists, and the KGAS066 science-matrix playbook for
+sub-agents working the `ms2uvfit → uvfit → uvkin` stack:
+
+**[docs/agents/README.md](docs/agents/README.md)** (branch `docs/agent-roster`)
+
 ## Setup
 
 Create and activate the conda environment:
