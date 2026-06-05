@@ -45,6 +45,8 @@ falsification criteria.
 - [definition-of-done.md](definition-of-done.md) — **CANFAR autonomous exit criteria**
   (pipeline validity, dataset similarity, cored-γ science gates)
 - `scripts/evaluate_science_status.py` — emits `SCIENCE_STATUS.json` from `run.log`
+- [canfar-cursor-runbook.md](canfar-cursor-runbook.md) — **CANFAR interactive + Cursor CLI** (`--model auto`)
+- `scripts/launch_agent_campaign.sh` — tmux launcher for all lead agents
 - [kgas066-science-matrix-playbook.md](kgas066-science-matrix-playbook.md) — KGAS066
   experiments keyed to existing YAML profiles and `science_matrix.py`
 

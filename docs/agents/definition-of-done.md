@@ -220,6 +220,7 @@ python3 scripts/record_agent_checkin.py \
 ```
 
 See [lead-checkins.md](lead-checkins.md) for cadence and mandatory gates.
+CANFAR: `bash scripts/launch_agent_campaign.sh --attach` ([canfar-cursor-runbook.md](canfar-cursor-runbook.md)) — all agents use `agent --model auto`.
 
 ---
 
